@@ -1,0 +1,327 @@
+{
+  "source": "C:\\Users\\RJ\\StudioProjects\\FatigueSense-Thesis",
+  "commit": "96817253c5b18c9b6479721a600c5c8e1fd1b56c",
+  "status": [],
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "D1EF7FFEF775570AB3F315F4E63F5E239C91B34C5C04A48AF7FAEC5FDB17853A"
+    },
+    {
+      "path": "MODEL_SWITCHING.md",
+      "sha256": "55BF4C0C4B73DCBD3E5FAE16DB660D210FCECFBD258992A2205A1C07873CE41D"
+    },
+    {
+      "path": "README.md",
+      "sha256": "7CF19159657BDCDC50209D149C7116DC00F5AC175D7492D27003D21455CB28B7"
+    },
+    {
+      "path": "app/.gitignore",
+      "sha256": "5C3174B74EDC6F2B9E0743594B8BD3C7F31E4F4405758CC9872B3FE1DE1D28B4"
+    },
+    {
+      "path": "app/build.gradle.kts",
+      "sha256": "13017EA5657D33BD6614BC43427D6D7DB3A15124EC106BE9A57935845939FEB2"
+    },
+    {
+      "path": "app/proguard-rules.pro",
+      "sha256": "48C84BD2AC064CE2665B62A6E7C0E87F3B4FE259708A76E16625C2B43E1BC078"
+    },
+    {
+      "path": "app/release/baselineProfiles/0/app-release.dm",
+      "sha256": "F0588176DFCD2094247F91BA42EB7965C27C5AF3FF0D51700A839EF34605026E"
+    },
+    {
+      "path": "app/release/baselineProfiles/1/app-release.dm",
+      "sha256": "173A405CC46228BC75793D0FB0B53337248A7E293D7D2EB85A799DC8A6731E55"
+    },
+    {
+      "path": "app/release/output-metadata.json",
+      "sha256": "C445021DD71BB7A6D515B9AC0DEC66102F8C93899BA3DC4FDF1C4FC0CD96796D"
+    },
+    {
+      "path": "app/release/removeddetection in st.apk",
+      "sha256": "8769DF232DBB8F84A08AAF0E7A7723EC103EC6980F0989BBD5490F0803C1BCD9"
+    },
+    {
+      "path": "app/src/androidTest/assets/README.md",
+      "sha256": "5DAAB361D22B534045A74A7F47EAEDF624E92580B466515F4DC5B152EECD32BE"
+    },
+    {
+      "path": "app/src/androidTest/assets/landmark32_expected.bin",
+      "sha256": "84C3531205622AFED4BAC072C8FB9D282734C02A72E8BF1310164A3E97F7EA98"
+    },
+    {
+      "path": "app/src/androidTest/assets/landmark32_input.bin",
+      "sha256": "2F5B5D9A0ACC8F0C397C35DFAF82B231F39A729F03F8C814F67B499E36F4B3AE"
+    },
+    {
+      "path": "app/src/androidTest/java/com/example/fatiguesense/ExampleInstrumentedTest.kt",
+      "sha256": "56FC8A6B74CD0BB0BD07C805110EE234DFF36EA9514D043494D27E220F1873F2"
+    },
+    {
+      "path": "app/src/androidTest/java/com/example/fatiguesense/LandmarkModelInstrumentedTest.kt",
+      "sha256": "1BBCE77318E5A787C6D78A0895C76B4E245663D9BA83C65137812A2624C462B5"
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "sha256": "23E147FBF6D2DA10421FFCF4667CD6D25DA4ACA06F1A1B1B52291DC2BCDEEEAF"
+    },
+    {
+      "path": "app/src/main/assets/coordinates32_android_fp32_float32.tflite",
+      "sha256": "680F3BF04F1F6C4EBF2445A6868294CD31E02D0D0073336C5D91BA5F640854EF"
+    },
+    {
+      "path": "app/src/main/assets/landmark_model_float32(ver3).tflite",
+      "sha256": "CB7FEC5061C092DF966F504A19C7FB1A1778A9FC482F91B88388EA66EAF3B17B"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/MainActivity.kt",
+      "sha256": "91282D7F434C98B7BBD8ABCA5532BDCD1CEDCA2D48D8BA32FF414DBFEB6E678E"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/db/FatigueDatabase.kt",
+      "sha256": "037C3B8CE4C0626DB34481FFD761E83F2A50BE63F9237F9FEAF4FAB18B33B3BC"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/db/FatigueEventDao.kt",
+      "sha256": "32DD89027777CB99BFC33CCF7A780BE823202B1E0508F10E4C17991CEB0B8270"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/db/FatigueEventEntity.kt",
+      "sha256": "D24701A6C81B64C3A532EC401AC3D5BAE1967DC33ED0C7B97F88C57896E0D4E4"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/Esp32AlertSender.kt",
+      "sha256": "1E4C13F7DFFC52905825EC1C22DD0A839A69F451867C6D3BD8C2C3FA000448B2"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/EspNetwork.kt",
+      "sha256": "9C184AB3087FF8415A7ACA1C37875F31E7B188BF59DAE0DE87AEF7DF189F7847"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/FatigueAnalyzer.kt",
+      "sha256": "C224F268012C4DBD0E6380CD8E395DA35D85D05C90D9050AA60706C93A5603C7"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/FatigueManager.kt",
+      "sha256": "7FA709F542852E0C0BEF8218954D7BC6F90B774C8D221293C107E8437D42EDA2"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/LandmarkModel.kt",
+      "sha256": "E5B09DC449A1A25AFC6904F7BED5F9AE568E56C68CFBC9CDD4FE63CCF0C35108"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/LegacyLandmarkModel.kt",
+      "sha256": "A9784CF6576F0B5D664A76FEACA67BED987E317F41E62052D228066B970DB608"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/MjpegStreamer.kt",
+      "sha256": "9CD07D6AE1CAC2482C7EBFBB155C04CDD803A7D2F7D015AB247DF78909369396"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/ModelProfile.kt",
+      "sha256": "6FC9EA54097733F5738ED4A4184E365CC744C4DDB54E23A3571D269BEBD1342E"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ml/PipelineShutdown.kt",
+      "sha256": "5E9E2A3DC8F27106BA3D190536F3B8C69046134B6B47ABA763523A7871C90BA3"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/services/FatigueService.kt",
+      "sha256": "2E68C151378CAE160DC46F84F5BF653537576AA3191A1B7EE9A6DE87F5AB5EEA"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/FatigueSenseApp.kt",
+      "sha256": "2EE91B29F019822E7A1731081626CB515401F5C7F37693B7658FD02543422014"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/components/UiComponents.kt",
+      "sha256": "804F501BF6D719A3B0AC30325D22E25CFBDF73E8E1DBB7EE5A82988BF16862E5"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/navigation/AppNavigation.kt",
+      "sha256": "A65013A75EE734495A3127B9C4EE7434A696A7757C8F11310B974EB3808724C9"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/screens/DashboardScreen.kt",
+      "sha256": "3F8B9F06709BD90E6151ACB0B9093758AD3969DDD9509032A2F6B8CE97EA252E"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/screens/FaceSetupScreen.kt",
+      "sha256": "A32DB11D6BFFF0E11016641691F736CBFC9323D5163D4BF3F4B120BF84D949E7"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/screens/LogsScreen.kt",
+      "sha256": "673D4FFD268050B5F9FD9D22AAE7A71B745DAFDDF257D8CCDB836CB3B2E0212E"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/screens/SettingsScreen.kt",
+      "sha256": "80EF148DC6B64BF3F924AF1B0ABF39B5BE5A59BD26879575FBE92AA23AC6FFCE"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/screens/Splashscreen.kt",
+      "sha256": "E27918E87BA0ED1016A81714ADC0D195E552769E3672F3DC86E444223DEAC1A7"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/theme/Color.kt",
+      "sha256": "05EA9ACC9E04D921F997B5A00B0E9B8EB1FA4710B19E5F4F299C5741EDF30DB9"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/theme/Theme.kt",
+      "sha256": "C2637EB2B86A4399C36FD1F91C9B1C1FD04DCFD8399A909FAFC6C96DEF416F04"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/ui/theme/Type.kt",
+      "sha256": "DB3885B9CF9FEA7D7EBFBD8E20834D14DDB1BA118496A264D04B60A1C8D6C1D3"
+    },
+    {
+      "path": "app/src/main/java/com/example/fatiguesense/utils/LogExportUtils.kt",
+      "sha256": "7E5D8A51224CE929B0438C725686F2B8AD86E07BD3DC2858260EA20D12144187"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher_background.xml",
+      "sha256": "FBFB76DFF2CF75C58CDCD19A54643F836797AA574B6A68A5C60A14DB6AEF35BB"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher_foreground.xml",
+      "sha256": "E73DC619761871057FE321ACFDEAC8AC7DBA66DA3B9C09EFED9E7244548EDA4F"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_logo_eye.xml",
+      "sha256": "A9934E1A411301544D6C8E381C378709512FC000C33098DC7E61C484EA1482A0"
+    },
+    {
+      "path": "app/src/main/res/layout/activity_main.xml",
+      "sha256": "BB333EB04D831D17B853DC54CC83F40300117BCE43E8E7C0CF7E7A9B423982A4"
+    },
+    {
+      "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "sha256": "E7C073FBEC1A51A73F678B266A1CB207AA6468E3EA1504D24F43591F31D2B7C5"
+    },
+    {
+      "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "sha256": "E7C073FBEC1A51A73F678B266A1CB207AA6468E3EA1504D24F43591F31D2B7C5"
+    },
+    {
+      "path": "app/src/main/res/mipmap-hdpi/ic_launcher.webp",
+      "sha256": "DD00996198640ED28FBC09CDCD7A3807CF8707F3EB255B659634DA3CA6A6FF01"
+    },
+    {
+      "path": "app/src/main/res/mipmap-hdpi/ic_launcher_round.webp",
+      "sha256": "1ED73F5341A69D3B41C7E02E126803F50CC8C3284ADF4BBB737F0C93577AEF07"
+    },
+    {
+      "path": "app/src/main/res/mipmap-mdpi/ic_launcher.webp",
+      "sha256": "846219E6F72FE9A6C104CA8919CBEE36A101E7D2FF8DA9DA67B689A5888F060D"
+    },
+    {
+      "path": "app/src/main/res/mipmap-mdpi/ic_launcher_round.webp",
+      "sha256": "4E2C58B91DE01130E6479E00CBBAAF6E77CD961DD2C8E303CF13CD077FA92632"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xhdpi/ic_launcher.webp",
+      "sha256": "398340DAD816FC9A6338CB151A8CF1E45B926F9BFB70628B24C4BD2523CC94D4"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xhdpi/ic_launcher_round.webp",
+      "sha256": "91B490AEF86574901137F0A252272E1F1ADD99C1AD709E0696ED68929B88D261"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xxhdpi/ic_launcher.webp",
+      "sha256": "58AE87FA0C5B5D1562D27FD648D2C061553FE20E3ED570BDE588162D01EA7A27"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xxhdpi/ic_launcher_round.webp",
+      "sha256": "3009FAD079F5772F30ECD767F98924367FBE0F81C30048D672D4FDA2D5CA7D12"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp",
+      "sha256": "F98FEF5BC3BFE5B65692C40AD1CBAE2BEC4FAF9F1B249C397626740DB71B62D8"
+    },
+    {
+      "path": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp",
+      "sha256": "5FAF033745C8C882C43BB1B372D4E4A5890CAEC63D9892A2E756C954108B85DC"
+    },
+    {
+      "path": "app/src/main/res/values-night/themes.xml",
+      "sha256": "A717799E6A5049EC0E036986A16B80FF9572CAB193F9AF8266AC06804EEA850D"
+    },
+    {
+      "path": "app/src/main/res/values/colors.xml",
+      "sha256": "4520A8CBB8BAA1DE07CA8B07F5DCF8EC21E8D4F966DAAE2D92CDD3401FDBCFC1"
+    },
+    {
+      "path": "app/src/main/res/values/strings.xml",
+      "sha256": "923ECF4D2EEC5162E03A93CC13BA20B634CA58E24575D580BA44BD27062B2A3E"
+    },
+    {
+      "path": "app/src/main/res/values/themes.xml",
+      "sha256": "B3E5FB089421DD8E07CD279219A3449BC85E3DB8B479CCCF18D2C0F826973AAA"
+    },
+    {
+      "path": "app/src/main/res/xml/backup_rules.xml",
+      "sha256": "FACAAEF2162BE6DD86544A819278042729ED481C38933A410651B81424DA7EA7"
+    },
+    {
+      "path": "app/src/main/res/xml/data_extraction_rules.xml",
+      "sha256": "940F48FB2BA4D9EC5A55671126796FEFA71661C0A5D7B434DC1E9BE23DA41690"
+    },
+    {
+      "path": "app/src/main/res/xml/file_provider_paths.xml",
+      "sha256": "43091DA17D280A928A1FF330F4E63E52A9E7B45999347AB13547858948CA0D3D"
+    },
+    {
+      "path": "app/src/test/java/com/example/fatiguesense/ExampleUnitTest.kt",
+      "sha256": "4C430B13542B4D32F80FF8D0D370DE939885238012CDF7A5878ECE8BDF16A2A9"
+    },
+    {
+      "path": "app/src/test/java/com/example/fatiguesense/FatigueAnalyzerTest.kt",
+      "sha256": "F01230A34533336F2764ABAE7432392F057CD655D656C77CDAD37CD5FB51E450"
+    },
+    {
+      "path": "app/src/test/java/com/example/fatiguesense/LegacyLandmarkModelTest.kt",
+      "sha256": "1B241FA35E11DDD71E920E027A2D4AA906D3AD26862A538FACAE1B5B2AE29BD5"
+    },
+    {
+      "path": "app/src/test/java/com/example/fatiguesense/MarYawnAlertLogicTest.kt",
+      "sha256": "4D89B85D947833E82FBB7991CE92790EBC7B479211AB7F90B99032E23B0820A8"
+    },
+    {
+      "path": "app/src/test/java/com/example/fatiguesense/PipelineShutdownTest.kt",
+      "sha256": "8E18787E117AC374CC789CE13812D99210D0C895F4D2EA1DBDFA4A7C15C787E3"
+    },
+    {
+      "path": "build.gradle.kts",
+      "sha256": "2C52AEB97530D4B7935EF8C3DA92BF187743FC0254EB6F9C9EAA309C86543F03"
+    },
+    {
+      "path": "gradle.properties",
+      "sha256": "12EB3B313B277E77D4FB6DF6FD0183C648A54B59627B53EEBC442C87FEDAA003"
+    },
+    {
+      "path": "gradle/libs.versions.toml",
+      "sha256": "8EF3AF4F65E48DEB80600D09C88A400AB1F6333E704C2018AE451B98E17F7AD0"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.jar",
+      "sha256": "E996D452D2645E70C01C11143CA2D3742734A28DA2BF61F25C82BDC288C9E637"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "CE25C75002D653FA55BD79E33EE2B9A96E112F11B84F60F7E17FF640B9CE658E"
+    },
+    {
+      "path": "gradlew",
+      "sha256": "C15A47B60A4EEEDE9FFEE33433FD990D8B6236607372B9BB1F6DC51B07B78C39"
+    },
+    {
+      "path": "gradlew.bat",
+      "sha256": "AF835F98787E9269AF5A046EDCB821A592FED372139DF7B947B471A63CFC236B"
+    },
+    {
+      "path": "settings.gradle.kts",
+      "sha256": "1846C481363D3AD78E65156B5BF05B6EDA599F8244CC97C6F05B8E9D9B6C943D"
+    }
+  ]
+}

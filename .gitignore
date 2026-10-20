@@ -1,0 +1,49 @@
+# Gradle files
+.gradle/
+build/
+
+# Local configuration
+local.properties
+enterprise.properties
+google-services.json
+*.jks
+*.keystore
+node_modules/
+.env
+.env.local
+.kotlin/
+
+# Android Studio / IntelliJ files
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/modules/
+.idea/jarRepositories.xml
+.idea/compiler.xml
+.idea/deploymentTargetDropDown.xml
+*.iml
+*.ipr
+*.iws
+
+# Build artifacts
+**/build/
+**/android_gradle_build/
+**/generated/
+
+# Native build folders
+.externalNativeBuild/
+.cxx/
+
+# Log files and heap dumps
+*.log
+*.hprof
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Captures
+captures/
