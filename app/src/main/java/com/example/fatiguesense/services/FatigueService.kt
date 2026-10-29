@@ -10,6 +10,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.fatiguesense.enterprise.MainActivity
 import com.example.fatiguesense.enterprise.ml.FatigueManager
+import com.example.fatiguesense.enterprise.ml.StreamStatus
+import com.example.fatiguesense.enterprise.ml.ActiveAlertState
 import com.example.fatiguesense.enterprise.enterprise.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,6 +52,21 @@ class FatigueService : Service() {
                 FatigueManager.start(this@FatigueService)
                 while (isActive) {
                     UploadScheduler.enqueue(this@FatigueService)
+                    try {
+                        EnterpriseAuth.heartbeat(session,
+                            FatigueManager.streamStatus.value == StreamStatus.STREAMING,
+                            FatigueManager.activeAlertState.value != ActiveAlertState.NONE)
+                        message.value = ""
+                    } catch (e: CancellationException) { throw e }
+                      catch (e: ApiError) {
+                        if (e.status == 401 || e.status == 403) {
+                            message.value = "Monitoring access ended. Sign in again or contact your administrator."
+                            stopSelf(); return@launch
+                        }
+                        message.value = "Monitoring locally; dashboard update pending."
+                    } catch (e: Exception) {
+                        message.value = "Monitoring locally; dashboard update pending."
+                    }
                     delay(30000)
                 }
             } catch (e: CancellationException) { throw e }

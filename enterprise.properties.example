@@ -1,7 +1,8 @@
-# Copy to enterprise.properties. All four values below are placeholders.
-# From the Firebase Android app registered as com.example.fatiguesense.enterprise:
+# Copy to enterprise.properties. This template contains client configuration only.
 FIREBASE_API_KEY=YOUR_FIREBASE_ANDROID_API_KEY
 FIREBASE_APP_ID=YOUR_FIREBASE_ANDROID_APP_ID
 FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID
-# HTTPS backend origin including /api; never the website URL or ESP IP.
 BACKEND_URL=https://YOUR_BACKEND_HOST.invalid/api
+# For debug builds only, a local backend can use http://<development-PC-LAN-IP>:8081/api.
+# Use the backend API server, not the website, Firebase Console, database or ESP URL.
+# Rebuild after changes. Never add Firebase Admin/service-account private keys.

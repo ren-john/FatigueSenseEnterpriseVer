@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Implementation update: 2026-10-18.
 
-Status: Android implementation authorized by the user's subsequent “Proceed with the plan.” The user then narrowed the work to the app and deferred backend work. The independent enterprise source copy and Android client are now implemented; connected validation remains pending configuration and compatible backend/firmware. The newly added `sentry-drive-backend` was inspected read-only. See [implementation status](docs/implementation-status.md) and [the app integration contract](docs/integration-contract.md) for completed work, evidence, and dependencies. The original Android app remains unchanged. This plan includes future full-system work and is not a claim that those phases are complete.
+Status update, 2026-10-29: the user authorized the company-to-driver-to-dashboard flow across Android, `sentry-drive-backend` and `sentry-drive-web`. That source integration is now implemented, preserving driver-only Android access and existing staff permissions. See [current setup and validation](docs/driver-integration.md). No live Firebase deployment or ESP firmware change occurred. The remaining sections record the original plan and historical scope decisions; they are not a claim that all planned reporting, custom rules or firmware work is complete.
 
 ## 1. Goal and boundaries
 

@@ -17,17 +17,20 @@ stay local; cloud payloads contain detection records only.
 - Personal history, sync status, CSV sharing and safe clearing of uploaded local history.
 - Event-time flags: 3 EAR/60 seconds, 6 yawns/600 seconds, 180 seconds without a face.
 
-## What is not connected yet
+## Driver and web integration
 
-The user asked to focus on Android and skip backend work. The newly supplied backend
-was inspected read-only. It has operator/gateway contracts but does not support the
-driver role or mobile endpoints required by this plan. The reference ESP firmware
-also lacks the device-ID and mDNS extensions. Neither repository was modified.
+The 2026-10-29 update connects this driver-only client to the sibling
+`sentry-drive-backend` and `sentry-drive-web` projects. Company Admins invite drivers
+by email and assign a vehicle/ESP. The driver sets a password, signs in, verifies
+the ESP and starts a server-authorized session. Heartbeats and revisioned event
+uploads feed the connected web dashboard and recent detection history.
 
-See [the exact API contract and compatibility gaps](docs/integration-contract.md).
-The app intentionally does not bypass identity checks to connect to those older
-contracts. Real sign-in, sessions, upload and hardware pairing require the documented
-backend/firmware extensions plus real Firebase configuration. No deployment occurred.
+See [the integration setup and validation](docs/driver-integration.md) and
+[the exact API contract](docs/integration-contract.md). The backend and web source
+are implemented and tested with isolated Firebase services. Apply the backend's
+rules/indexes and rebuild/restart it before real-project use. No live Firebase
+deployment occurred. ESP identity/mDNS extensions and physical hardware validation
+remain separate firmware requirements; identity checks are retained.
 
 With placeholders, the APK opens to a login screen explaining incomplete configuration.
 No mock account or authentication bypass is provided.
@@ -54,7 +57,10 @@ Copy `enterprise.properties.example` to ignored `enterprise.properties` and repl
 
 The same placeholders are Gradle fallbacks. These are all active app placeholders;
 `plan.md` lists future website/deployment settings separately. Cloud APIs require
-HTTPS. Local ESP HTTP is retained for the prototype. Never include Admin SDK keys.
+HTTPS in release builds. Debug builds also accept a reachable local HTTP backend.
+The server root and `/api` base are accepted and normalized. A physical phone
+needs the development computer's reachable LAN address and port, not localhost.
+Local ESP HTTP is retained. Never include Admin SDK keys.
 
 Firebase is initialized programmatically using `FirebaseOptions`; no fabricated
 `google-services.json` is needed. Register the final application ID before release.

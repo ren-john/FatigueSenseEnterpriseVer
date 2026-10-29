@@ -1,5 +1,13 @@
 # Android implementation status — 2026-10-18
 
+2026-10-29 update: the subsequently authorized cross-repository driver integration
+is implemented. The backend now supports driver onboarding, assignments, mobile
+sessions, revisioned uploads and live publication; the web adds driver management,
+live monitoring, acknowledgments and recent history. Android adds heartbeats,
+idempotent session requests and debug-only local HTTP support. See
+[current setup and validation](driver-integration.md). The remainder of this file
+is the historical 2026-10-18 Android-only implementation record.
+
 Scope: implement the enterprise Android app. Backend work was explicitly deferred.
 The subsequently supplied `sentry-drive-backend` was inspected to check compatibility;
 no backend, website or ESP firmware files were changed. This is an app prototype,

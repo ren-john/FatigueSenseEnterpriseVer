@@ -1,34 +1,40 @@
-# App integration contract (backend and firmware work deferred)
+# App integration contract
 
-This documents the client implementation, not endpoints that already exist.
-The backend/website/firmware are unchanged in this app-only phase.
+The driver API is implemented in the sibling `sentry-drive-backend` repository as
+of 2026-10-29, alongside connected driver management, live fleet and recent history
+in `sentry-drive-web`. See [setup and validation](driver-integration.md) and the
+backend's `docs/driver-integration.md` for the current implementation. No live
+Firebase deployment or ESP firmware change occurred.
 
-## Inspected backend mismatch
+## Legacy gateway contract
 
-Backend path: `C:\RJ\Coding\FatigueSenseWebsite\sentry-drive-backend`.
-Relevant files: `functions/src/server/http.ts`, `index.ts`, `config.ts`,
-`types.ts`, `gateway/inbox.ts`, and `docs/frontend-contract-changes.md`.
+The original operator/gateway API remains supported. Driver requests use explicit
+mobile endpoints and separate authorization, driver records, assignments and
+sessions. They are not sent directly to the old gateway inbox. Relevant backend
+files are `functions/src/drivers/`, `server/http.ts`, `index.ts` and
+`gateway/inbox.ts`.
 
 - HTTP POST uses `Authorization: Bearer <Firebase ID token>`, JSON `{data: ...}`,
   success `{result: ...}`, failure `{error: {code, message}}`; max body is 16 KiB.
   The app uses the same envelope and bounded batches with a byte-size check.
-- Current dispatch accepts only admin/supervisor/dispatcher claims. The accepted
-  plan requires a driver role and validated membership; do not sign drivers in as
-  admins or reuse a vehicle gateway identity as a human identity.
-- Current event ingestion is RTDB `events_inbox` processed by a worker, with
+- Existing staff dispatch accepts admin/supervisor/dispatcher claims. Mobile
+  routes accept only driver claims and validate active driver membership. Driver
+  records are separate from the staff roster; staff accounts cannot sign in to
+  Android and drivers cannot invoke staff management.
+- Legacy event ingestion is RTDB `events_inbox` processed by a worker, with
   vehicle identity only, 20-character push IDs, a 500-byte payload limit and a
   24-hour timestamp acceptance window. It lacks driver UID, sessions, revisioned
   UUID records, unknown metrics/durations, no-face intervals and driver flags.
-- Current historical fields are lowercase `ear`/`mar`; its duration validator is
-  integer-based. The app contract below uses `EAR`/`MAR` and duration in **seconds**.
-  Map these deliberately in the future backend extension; do not pass the new
-  payload straight into the old inbox processor or silently change units.
-- Current alert rules fix EAR at five-minute windows. The accepted one-minute
-  EAR rule/no-face rule need backend/web schema changes before connected reporting.
+- Stored history uses lowercase `ear`/`mar` and integer millisecond durations.
+  The app contract below uses `EAR`/`MAR` and duration in **seconds**. The new
+  mobile ingestion converts units explicitly and stores original nullable metrics.
+- Legacy configurable eye rules retain their five-minute window. Driver monitoring
+  implements the approved one-minute eye rule and separate no-face observation.
 
 ## Required mobile HTTP endpoints
 
-All endpoints below are **pending backend implementation**. The backend must
+All endpoints below are implemented and tested with isolated Firebase services.
+The backend does
 verify tokens with revocation, active membership, organization, assignments and
 session ownership. UID/org/roles are derived from the token, not event input.
 
@@ -36,7 +42,8 @@ session ownership. UID/org/roles are derived from the token, not event input.
 | --- | --- | --- |
 | `mobileAccess` | `{}` | `{displayName: string}` after active/activated driver access validation |
 | `mobileAssignments` | `{}` | `{assignments: [{vehicleId, deviceId, label}]}` restricted to that driver |
-| `mobileStartSession` | `{vehicleId, deviceId}` | `{sessionId}` after server assignment and exclusive vehicle-session check |
+| `mobileStartSession` | `{requestId, vehicleId, deviceId}` | `{sessionId}` after server assignment and exclusive vehicle-session check; requestId is a UUID reused on retries |
+| `mobileHeartbeat` | `{sessionId, streaming, alertActive}` | `{success: true}` after current session/assignment checks; refreshes live status |
 | `mobileUploadEvents` | `{events: [...]}` | `{accepted: [{eventId, revision}], rejected?: [{eventId, revision, permanent, message}]}` |
 | `mobileEndSession` | `{sessionId, endedAt}` | `{success: true}` idempotently closing the owned session |
 
@@ -82,8 +89,8 @@ are queued separately; events upload before normal session closure.
 The active service requests an upload attempt every 30 seconds, plus event-edge
 requests. WorkManager connectivity/backoff controls actual timing. A 15-minute
 periodic job provides recovery; it does not promise exact periodic scheduling.
-No RTDB live telemetry client is implemented in this app-only phase. All actual
-cloud operations currently use the mobile HTTP boundary above.
+Android does not write RTDB directly. All cloud operations use the authenticated
+HTTP boundary above; the backend publishes RTDB live state for web subscribers.
 
 ## Required ESP identity and discovery extension
 

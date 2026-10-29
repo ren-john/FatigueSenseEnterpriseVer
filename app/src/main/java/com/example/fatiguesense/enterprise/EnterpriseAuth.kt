@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 data class Driver(val uid: String, val orgId: String, val name: String)
 data class Assignment(val vehicleId: String, val deviceId: String, val label: String)
@@ -23,14 +24,16 @@ object EnterpriseAuth {
     val session = MutableStateFlow<DriverSession?>(null)
     val selection = MutableStateFlow<Assignment?>(null)
     private var firebase: FirebaseAuth? = null
+    private var pendingStart: Pair<String, String>? = null
+    private val apiBase: String get() = BackendAddress.apiBase(BuildConfig.BACKEND_URL, BuildConfig.DEBUG)
     val configurationError: String? get() = if (listOf(BuildConfig.FIREBASE_API_KEY,
         BuildConfig.FIREBASE_APP_ID, BuildConfig.FIREBASE_PROJECT_ID, BuildConfig.BACKEND_URL)
         .any { it.isBlank() || it.contains("YOUR_") || it.contains(".invalid") })
-        "Firebase/backend placeholders are not configured. See enterprise.properties.example." else null
+        "Firebase/backend placeholders are not configured. See enterprise.properties.example."
+        else runCatching { apiBase }.exceptionOrNull()?.message
 
     fun initialize(context: Context) {
         if (firebase != null || configurationError != null) return
-        require(URL(BuildConfig.BACKEND_URL).protocol == "https") { "Backend must use HTTPS" }
         val app = FirebaseApp.getApps(context).firstOrNull { it.name == "enterprise" }
             ?: FirebaseApp.initializeApp(context, FirebaseOptions.Builder()
                 .setApiKey(BuildConfig.FIREBASE_API_KEY).setApplicationId(BuildConfig.FIREBASE_APP_ID)
@@ -63,11 +66,20 @@ object EnterpriseAuth {
     }
     suspend fun begin(assignment: Assignment): DriverSession {
         val current = driver.value ?: error("Sign in first")
-        val result = call("mobileStartSession", JSONObject().put("vehicleId", assignment.vehicleId).put("deviceId", assignment.deviceId))
+        val key = "${current.uid}:${assignment.vehicleId}:${assignment.deviceId}"
+        val requestId = pendingStart?.takeIf { it.first == key }?.second ?: UUID.randomUUID().toString().also { pendingStart = key to it }
+        val result = call("mobileStartSession", JSONObject().put("requestId", requestId)
+            .put("vehicleId", assignment.vehicleId).put("deviceId", assignment.deviceId))
         check(driver.value == current) { "Account changed" }
+        pendingStart = null
         return DriverSession(current, assignment, requireId(result.getString("sessionId"))).also { session.value = it }
     }
-    fun signOut() { session.value = null; selection.value = null; driver.value = null; firebase?.signOut(); EspConnection.clear() }
+    suspend fun heartbeat(session: DriverSession, streaming: Boolean, alertActive: Boolean) {
+        val response = call("mobileHeartbeat", JSONObject().put("sessionId", session.sessionId)
+            .put("streaming", streaming).put("alertActive", alertActive), session.driver.uid)
+        check(response.optBoolean("success")) { "Heartbeat was not acknowledged" }
+    }
+    fun signOut() { session.value = null; selection.value = null; driver.value = null; pendingStart = null; firebase?.signOut(); EspConnection.clear() }
 
     private fun requireId(value: String): String {
         require(value.isNotBlank() && value.length <= 128 && value.none { it.isISOControl() || it == '/' }) { "Server returned an invalid identifier" }
@@ -81,7 +93,7 @@ object EnterpriseAuth {
         val token = user.getIdToken(false).await().token ?: error("Authentication expired")
         check(firebase?.currentUser?.uid == user.uid) { "Account changed" }
         return withContext(Dispatchers.IO) {
-            val connection = URL("${BuildConfig.BACKEND_URL}/$action").openConnection() as HttpURLConnection
+            val connection = URL("$apiBase/$action").openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "POST"; connection.instanceFollowRedirects = false
                 connection.connectTimeout = 15000; connection.readTimeout = 30000
