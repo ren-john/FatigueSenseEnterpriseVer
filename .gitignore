@@ -14,16 +14,7 @@ node_modules/
 .kotlin/
 
 # Android Studio / IntelliJ files
-.idea/caches/
-.idea/libraries/
-.idea/modules.xml
-.idea/workspace.xml
-.idea/navEditor.xml
-.idea/assetWizardSettings.xml
-.idea/modules/
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/deploymentTargetDropDown.xml
+.idea/
 *.iml
 *.ipr
 *.iws

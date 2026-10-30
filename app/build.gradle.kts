@@ -1,6 +1,7 @@
 import java.util.Properties
 
 plugins {
+    alias(libs.plugins.google.services)
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
@@ -18,15 +19,12 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.fatiguesense.enterprise"
+        applicationId = "com.fatiguesense.enterprise"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
         mapOf(
-            "FIREBASE_API_KEY" to "YOUR_FIREBASE_ANDROID_API_KEY",
-            "FIREBASE_APP_ID" to "YOUR_FIREBASE_ANDROID_APP_ID",
-            "FIREBASE_PROJECT_ID" to "YOUR_FIREBASE_PROJECT_ID",
             "BACKEND_URL" to "https://YOUR_BACKEND_HOST.invalid/api",
         ).forEach { (key, fallback) ->
             val value = enterpriseConfig.getProperty(key, fallback)

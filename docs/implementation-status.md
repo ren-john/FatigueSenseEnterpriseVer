@@ -1,5 +1,15 @@
 # Android implementation status — 2026-10-18
 
+2026-10-30 configuration update: the application ID is now
+`com.fatiguesense.enterprise`, matching the downloaded Android registration.
+Firebase Auth now uses `app/google-services.json` through the Google Services
+Gradle plugin, and `enterprise.properties` supplies only `BACKEND_URL`. See
+[current build instructions](../README.md#build-and-configuration). Earlier
+package names and manual Firebase setup below describe the historical prototype.
+The updated debug APK, 33 unit tests, 9 emulator instrumentation tests and lint
+pass. Generated Firebase resources match the downloaded JSON; live-account
+sign-in and backend access remain unverified by this configuration check.
+
 2026-10-29 update: the subsequently authorized cross-repository driver integration
 is implemented. The backend now supports driver onboarding, assignments, mobile
 sessions, revisioned uploads and live publication; the web adds driver management,

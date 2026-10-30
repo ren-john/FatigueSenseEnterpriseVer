@@ -1,7 +1,7 @@
 # FatigueSenseEnterprise Android prototype
 
 Independent Kotlin/Compose copy of FatigueSense. The original Android app is unchanged.
-Package: `com.example.fatiguesense.enterprise`. Label: `FatigueSenseEnterprise`.
+Application ID: `com.fatiguesense.enterprise`. Label: `FatigueSenseEnterprise`.
 ML assets, calibration, streaming and local alarm behavior are retained. Camera frames
 stay local; cloud payloads contain detection records only.
 
@@ -32,38 +32,45 @@ rules/indexes and rebuild/restart it before real-project use. No live Firebase
 deployment occurred. ESP identity/mDNS extensions and physical hardware validation
 remain separate firmware requirements; identity checks are retained.
 
-With placeholders, the APK opens to a login screen explaining incomplete configuration.
+With a placeholder backend URL, the APK opens to a login screen explaining incomplete configuration.
 No mock account or authentication bypass is provided.
 
 ## Build and configuration
 
-Use Android Studio's JDK (Java 17+) and Android SDK 36. Set the SDK path in ignored
-`local.properties`, then run:
+Use JDK 17 or 21 and Android SDK 36. Gradle 8.13 does not support running on JDK 25.
+Set the SDK path in ignored `local.properties`, then run:
 
-```powershell
-$env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
-.\gradlew.bat --no-daemon assembleDebug testDebugUnitTest lintDebug
+```bash
+JAVA_HOME=/path/to/jdk-21 bash ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 ```
 
+On Windows, set `JAVA_HOME` to JDK 17 or 21 and use `gradlew.bat`.
+
 APK: `app/build/outputs/apk/debug/app-debug.apk`.
+Download the Firebase Android configuration for `com.fatiguesense.enterprise` from
+the same Firebase project as the backend and place it at ignored
+`app/google-services.json`. The Google Services Gradle plugin processes this file;
+builds fail if it is missing or has no matching Android package. Do not edit the
+downloaded package name to work around a registration mismatch.
+
 Copy `enterprise.properties.example` to ignored `enterprise.properties` and replace:
 
 | Key | Placeholder |
 | --- | --- |
-| FIREBASE_API_KEY | YOUR_FIREBASE_ANDROID_API_KEY |
-| FIREBASE_APP_ID | YOUR_FIREBASE_ANDROID_APP_ID |
-| FIREBASE_PROJECT_ID | YOUR_FIREBASE_PROJECT_ID |
 | BACKEND_URL | https://YOUR_BACKEND_HOST.invalid/api |
 
-The same placeholders are Gradle fallbacks. These are all active app placeholders;
-`plan.md` lists future website/deployment settings separately. Cloud APIs require
+The backend placeholder is also the Gradle fallback. Firebase settings come only
+from the JSON; legacy `FIREBASE_*` properties are no longer read. Cloud APIs require
 HTTPS in release builds. Debug builds also accept a reachable local HTTP backend.
 The server root and `/api` base are accepted and normalized. A physical phone
 needs the development computer's reachable LAN address and port, not localhost.
 Local ESP HTTP is retained. Never include Admin SDK keys.
 
-Firebase is initialized programmatically using `FirebaseOptions`; no fabricated
-`google-services.json` is needed. Register the final application ID before release.
+Firebase Auth uses the default Firebase app initialized from generated resources.
+The Kotlin namespace remains `com.example.fatiguesense.enterprise`; the installed
+application ID matches the Firebase registration. This installs separately from
+the earlier `com.example.fatiguesense.enterprise` prototype and does not migrate
+its saved events, pairing, or sign-in state. Export any needed history first.
 Release signing remains undecided. The existing app's signing material was not copied.
 
 Firebase BoM 33.7.0 is pinned for the cloned Kotlin 2.0.21/KSP toolchain. Tested BoM

@@ -33,9 +33,11 @@ organization. Driver authority and event ownership are enforced server-side.
 
 ## Setup before using real accounts
 
-1. Keep Firebase project IDs aligned across all three repositories. Client config
-   stays in ignored Android `enterprise.properties` and web `.env.local`. Private
-   service-account credentials remain backend-only.
+1. Keep Firebase project IDs aligned across all three repositories. Download the
+   Android registration's config for `com.fatiguesense.enterprise` into ignored
+   `app/google-services.json`; Firebase Auth uses the default app configured by
+   the Google Services Gradle plugin. Web client config stays in `.env.local`.
+   Private service-account credentials remain backend-only.
 2. Build and restart the updated local Node backend. Preserve its real Firebase
    `.env`; no Auth/Firestore/RTDB emulator hosts are needed for application use.
 3. Review and apply the backend's updated Firestore rules/indexes and RTDB rules
@@ -46,17 +48,25 @@ organization. Driver authority and event ownership are enforced server-side.
    example `http://<development-PC-LAN-IP>:8081/api` in a debug build. The web's
    relative `/api` proxy is not a native Android address. Rebuild after changes.
    Release builds require a trusted HTTPS backend endpoint.
+   Android `enterprise.properties` now supplies only `BACKEND_URL`; legacy
+   `FIREBASE_*` entries are ignored. The new application ID installs separately
+   from the previous `com.example.fatiguesense.enterprise` prototype.
 6. Register the ESP's stable device ID on the vehicle. Firmware must expose that
    matching `device_id`; automatic discovery additionally needs the documented
    mDNS extension. The app does not bypass identity checks for older firmware.
 
 No user configuration values, live accounts, real emails, Firebase rules or live
-records were modified during source implementation and isolated testing.
+records were modified during the 2026-10-29 source implementation and isolated testing.
 
 ## Validation
 
-- Android debug APK, all 33 unit tests and lint pass, including backend address tests.
-- All 8 Android instrumentation tests pass on the available API 37 emulator.
+- Android revalidation on 2026-10-30: debug APK, test APK, all 33 unit tests and
+  lint pass. Lint reports 66 warnings and one hint, with no errors.
+- All 9 Android instrumentation tests pass on the available API 37 emulator,
+  including the application ID and default Firebase Auth configuration checks.
+  Generated Firebase resources were also compared with the downloaded JSON.
+  Real-account Firebase sign-in and backend access were not tested in this check.
+- The backend and web results below are from the 2026-10-29 integration validation.
 - All 398 backend tests pass: 247 server/service/integration tests and 151 rules
   tests against isolated Auth, Firestore and RTDB services. They include actual
   sign-in tokens through HTTP, existing staff/gateway behavior and the driver flow.

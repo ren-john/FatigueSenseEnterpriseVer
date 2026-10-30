@@ -3,7 +3,6 @@ package com.example.fatiguesense.enterprise.enterprise
 import android.content.Context
 import com.example.fatiguesense.enterprise.BuildConfig
 import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -26,18 +25,16 @@ object EnterpriseAuth {
     private var firebase: FirebaseAuth? = null
     private var pendingStart: Pair<String, String>? = null
     private val apiBase: String get() = BackendAddress.apiBase(BuildConfig.BACKEND_URL, BuildConfig.DEBUG)
-    val configurationError: String? get() = if (listOf(BuildConfig.FIREBASE_API_KEY,
-        BuildConfig.FIREBASE_APP_ID, BuildConfig.FIREBASE_PROJECT_ID, BuildConfig.BACKEND_URL)
+    val configurationError: String? get() = if (listOf(BuildConfig.BACKEND_URL)
         .any { it.isBlank() || it.contains("YOUR_") || it.contains(".invalid") })
-        "Firebase/backend placeholders are not configured. See enterprise.properties.example."
+        "Backend URL is not configured. See enterprise.properties.example."
         else runCatching { apiBase }.exceptionOrNull()?.message
 
     fun initialize(context: Context) {
         if (firebase != null || configurationError != null) return
-        val app = FirebaseApp.getApps(context).firstOrNull { it.name == "enterprise" }
-            ?: FirebaseApp.initializeApp(context, FirebaseOptions.Builder()
-                .setApiKey(BuildConfig.FIREBASE_API_KEY).setApplicationId(BuildConfig.FIREBASE_APP_ID)
-                .setProjectId(BuildConfig.FIREBASE_PROJECT_ID).build(), "enterprise")
+        val app = checkNotNull(FirebaseApp.initializeApp(context)) {
+            "Firebase configuration is missing. Add app/google-services.json and rebuild."
+        }
         firebase = FirebaseAuth.getInstance(app)
     }
     suspend fun signIn(email: String, password: String) {

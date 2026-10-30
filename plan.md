@@ -337,7 +337,7 @@ This is required to deliver the user's outcome; Android uploads alone will not p
 ## 12. User decisions and remaining explanations
 
 1. **Deployment/configuration:** website is not hosted yet. Use clearly labeled placeholders for all unavailable configuration; record each one in Section 12.1. Do not invent live endpoints or claim connectivity. Backend source is now available and inspected; driver/mobile integration and deployed configuration remain pending.
-2. **Application ID/signing:** no final choice yet. Keep the proposed enterprise identifier provisional; defer production Firebase Android registration and release signing until the identifier/owner is settled.
+2. **Application ID/signing:** as of 2026-10-30, use `com.fatiguesense.enterprise` to match the downloaded Firebase Android registration. Release signing and ownership remain deferred.
 3. **Who gets an account and what they can do — approved:** administrators create/invite driver accounts and assign the permitted vehicle/ESP. Drivers set their own passwords, sign in, and submit their own detection logs. Administrators see their organization's reports; drivers do not receive administrator permissions. Implement the approved role/assignment extension in Section 5 when coding is requested.
 4. **Offline reporting:** confirmed. Store logs locally with original times, upload in batches, and evaluate 3 EAR events/1 minute, 6 yawns/10 minutes (time window explicitly confirmed), and 3 continuous minutes without a face. See Section 6.1. The response resolves reporting behavior; maximum offline authorization duration, revoked-account backlog, and stale-session takeover remain separate access policies to define before release.
 5. **Yawn reporting:** covered by item 4. A separate count of physical alarm commands is not required; preserve the underlying local alarm behavior and avoid double-counting yawns.
@@ -348,7 +348,14 @@ This is required to deliver the user's outcome; Android uploads alone will not p
 
 ### 12.1. Placeholder register
 
-The Android client uses four placeholders in `enterprise.properties.example` and the fallback values in `app/build.gradle.kts`: `FIREBASE_API_KEY`, `FIREBASE_APP_ID`, `FIREBASE_PROJECT_ID`, and `BACKEND_URL`. Copy the example to ignored `enterprise.properties` when real settings are available. Firebase is initialized programmatically, so a placeholder `google-services.json` is unnecessary. The other entries below are future deployment settings, not active app dependencies. Unresolved active placeholders prevent connected operation. A Firebase configuration value is not a substitute for authentication/authorization.
+2026-10-30 update: Firebase client configuration now comes from the downloaded,
+ignored `app/google-services.json`, processed by the Google Services Gradle plugin.
+The application ID is `com.fatiguesense.enterprise`, matching that registration.
+Only `BACKEND_URL` remains in `enterprise.properties.example` and Gradle's
+placeholder fallback; legacy `FIREBASE_*` properties are no longer read. Missing
+or mismatched JSON fails the build, and an unresolved backend URL prevents
+connected operation. The register below records the earlier plan's deployment
+settings. A Firebase configuration value is not a substitute for authentication/authorization.
 
 | Setting / consumer | Placeholder value | Replacement source / note |
 | --- | --- | --- |
@@ -362,7 +369,7 @@ The Android client uses four placeholders in `enterprise.properties.example` and
 | Firebase Android app ID | `YOUR_FIREBASE_ANDROID_APP_ID` | Final Android registration's Firebase configuration. |
 | Firebase project number / sender ID | `YOUR_FIREBASE_PROJECT_NUMBER` | Project configuration; include in Android config where required, without adding a messaging feature. |
 | Firebase RTDB URL | `https://YOUR_FIREBASE_DATABASE_HOST.invalid` | Exact database URL from Firebase; region-dependent. Existing frontend currently has no RTDB initialization, so wire an explicit config key later. |
-| Final Android application ID | `YOUR_ENTERPRISE_APPLICATION_ID` | Current proposal `com.example.fatiguesense.enterprise` is provisional, not a registered production ID. |
+| Android application ID | `com.fatiguesense.enterprise` | Matches the downloaded Firebase Android registration as of 2026-10-30. |
 | Backend service-account credential location | `YOUR_BACKEND_CREDENTIALS_PATH` | Server-only deployment configuration. Never place private keys in frontend variables or the APK; actual credential format depends on inspected backend. |
 | Release keystore path / alias | `YOUR_ENTERPRISE_KEYSTORE_PATH` / `YOUR_ENTERPRISE_KEY_ALIAS` | Enterprise release owner; passwords supplied through protected build configuration, not this document. |
 
