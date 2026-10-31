@@ -48,4 +48,25 @@ class EnterpriseDatabaseTest {
         assertEquals("esp", restored.espId); assertEquals(1L, restored.pairedAt)
         assertEquals("192.168.43.4", restored.lastKnownIp)
     }
+    @Test fun closureCanBeAcknowledgedBeforeBacklogWithoutLosingEventsOrOtherAccounts() = runBlocking {
+        dao.saveSession(LocalSession("session", "one", "org"))
+        dao.saveSession(LocalSession("other-user", "two", "org", endedAt = 2000))
+        dao.saveSession(LocalSession("other-org", "one", "other", endedAt = 2000))
+        dao.saveEvent(event())
+        dao.closeSession("session", 2000)
+        assertEquals(listOf("session"), dao.pendingClosures("one", "org").map { it.sessionId })
+        dao.acknowledgeSession("session")
+        assertTrue(dao.pendingClosures("one", "org").isEmpty())
+        assertEquals(listOf("a"), dao.pending("one", "org").map { it.eventId })
+        assertEquals(1, dao.pendingClosures("two", "org").size)
+        assertEquals(1, dao.pendingClosures("one", "other").size)
+    }
+    @Test fun replacingLocalPairingRetainsHistoricalDeviceIdentity() = runBlocking {
+        dao.saveDevice(PairedDevice("org", "vehicle", "esp", "192.168.4.1", "ap", 1, 1))
+        dao.saveEvent(event())
+        dao.forgetDevice("org", "vehicle")
+        dao.saveDevice(PairedDevice("org", "vehicle", "replacement", "192.168.4.2", "ap", 2, 2))
+        assertEquals("replacement", dao.device("org", "vehicle")!!.espId)
+        assertEquals("esp", dao.history("one", "org").single().deviceId)
+    }
 }

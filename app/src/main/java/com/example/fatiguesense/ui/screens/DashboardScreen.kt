@@ -51,6 +51,7 @@ fun DashboardScreen() {
     val streamStatus      by FatigueManager.streamStatus.collectAsState()
     val streamFps         by FatigueManager.streamFps.collectAsState()
     val isMonitoring      by FatigueManager.isMonitoring.collectAsState()
+    val transitioning     by FatigueService.transitioning.collectAsState()
     val isAdaptiveMode    by FatigueManager.isAdaptiveModeEnabled.collectAsState()
     val warmupProgress    by FatigueManager.warmupProgress.collectAsState()
 
@@ -374,7 +375,9 @@ fun DashboardScreen() {
             Spacer(Modifier.height(20.dp))
 
             // ── Start / Stop button ───────────────────────────────────────────
-            if (isMonitoring) {
+            if (transitioning) {
+                Text("Please wait for the monitoring session to finish changing…", modifier = Modifier.padding(12.dp))
+            } else if (isMonitoring) {
                 OutlinedActionButton(
                     text    = "■  STOP MONITORING",
                     onClick = {

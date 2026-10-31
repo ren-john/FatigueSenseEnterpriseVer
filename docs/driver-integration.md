@@ -53,7 +53,10 @@ organization. Driver authority and event ownership are enforced server-side.
    from the previous `com.example.fatiguesense.enterprise` prototype.
 6. Register the ESP's stable device ID on the vehicle. Firmware must expose that
    matching `device_id`; automatic discovery additionally needs the documented
-   mDNS extension. The app does not bypass identity checks for older firmware.
+   mDNS extension. Strict verification is the default. For older firmware omitting
+   `device_id`, the temporary manual-ID option requires explicit confirmation of
+   the exact assigned ID; a reported mismatch is always rejected. Camera readiness,
+   connectivity, password and backend authorization remain required.
 
 No user configuration values, live accounts, real emails, Firebase rules or live
 records were modified during the 2026-10-29 source implementation and isolated testing.

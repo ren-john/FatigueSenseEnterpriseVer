@@ -5,14 +5,15 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.services.FatigueService
 import com.example.fatiguesense.enterprise.ui.FatigueSenseApp
 import com.example.fatiguesense.enterprise.ui.theme.FatigueSenseTheme
@@ -25,8 +26,9 @@ import java.util.Date
 fun EnterpriseApp() {
     val context = LocalContext.current
     val driver by EnterpriseAuth.driver.collectAsState()
-    val verified by EspConnection.verifiedId.collectAsState()
+    val configured by EspConnection.configuredAssignment.collectAsState()
     val session by EnterpriseAuth.session.collectAsState()
+    val transitioning by FatigueService.transitioning.collectAsState()
     var checking by remember { mutableStateOf(true) }
     var showMonitoring by rememberSaveable(driver?.uid) { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -42,19 +44,18 @@ fun EnterpriseApp() {
         Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (checking) Box(Modifier.padding(32.dp)) { Text("Checking your account…") }
             else if (driver == null) LoginScreen(message)
-            else if (session == null && (!showMonitoring || verified == null)) DeviceScreen(driver!!, onDone = { showMonitoring = true }, onLogout = {
+            else if (session == null && (!showMonitoring || configured == null)) DeviceScreen(driver!!, onDone = { showMonitoring = true }, onLogout = {
                 EnterpriseAuth.signOut(); showMonitoring = false
             })
             else Column(Modifier.fillMaxSize()) {
                 val journalError by DetectionJournal.error.collectAsState()
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(driver!!.name, Modifier.weight(1f).padding(top = 12.dp))
-                    TextButton(enabled = !busy, onClick = {
+                    TextButton(enabled = !busy && !transitioning, onClick = {
                         busy = true
-                        context.stopService(Intent(context, FatigueService::class.java))
                         scope.launch {
-                            FatigueManager.stop(); FatigueService.cleanup?.join(); DetectionJournal.stop()
-                            showMonitoring = false; busy = false
+                            try { FatigueService.stopAndAwait(context); showMonitoring = false }
+                            finally { busy = false }
                         }
                     }) { Text("Device / account") }
                 }
@@ -95,38 +96,65 @@ fun EnterpriseApp() {
     var selected by remember { mutableStateOf(EnterpriseAuth.selection.value) }
     var ip by remember { mutableStateOf(EspConnection.host.value.ifBlank { "192.168.4.1" }) }
     var setupPassword by remember { mutableStateOf("safedriving") }
+    var manualConfirmation by remember(selected) { mutableStateOf(false) }
+    var manualDeviceId by remember(selected) { mutableStateOf("") }
     var ssid by remember { mutableStateOf(context.getSharedPreferences("enterprise-setup", 0).getString("ssid", "") ?: "") }
     var password by remember { mutableStateOf("") }; var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("Join the ESP hotspot for setup, or enable the configured phone hotspot to reconnect.") }
     val serviceMessage by FatigueService.message.collectAsState()
+    val transitioning by FatigueService.transitioning.collectAsState()
+    fun invalidateVerification() { EspConnection.clear(); EnterpriseAuth.selection.value = null }
     fun perform(action: suspend () -> Unit) {
         busy = true
         scope.launch { try { action() } catch (e: CancellationException) { throw e }
             catch (e: Exception) { message = e.message ?: "Connection failed" } finally { busy = false } }
     }
     LaunchedEffect(driver.uid) {
-        try { assignments = EnterpriseAuth.assignments(); if (selected !in assignments) selected = assignments.firstOrNull() }
+        try {
+            assignments = EnterpriseAuth.assignments()
+            if (selected !in assignments) { selected = assignments.firstOrNull(); invalidateVerification() }
+        }
         catch (e: Exception) { message = e.message ?: "Cannot load assignments" }
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Connect your assigned ESP", style = MaterialTheme.typography.headlineSmall)
         Text(driver.name)
         assignments.forEach { assignment ->
-            TextButton(enabled = !busy, onClick = { selected = assignment }) {
+            TextButton(enabled = !busy && !transitioning, onClick = {
+                if (selected != assignment) { selected = assignment; invalidateVerification() }
+            }) {
                 Text("${if (selected == assignment) "✓ " else ""}${assignment.label} · ${assignment.deviceId}")
             }
         }
         if (assignments.isEmpty()) Text("No assignments loaded. Your administrator must assign a vehicle and ESP.")
-        OutlinedTextField(ip, { ip = it }, label = { Text("ESP IP (manual fallback)") }, singleLine = true)
-        OutlinedTextField(setupPassword, { setupPassword = it }, label = { Text("ESP setup password") }, visualTransformation = PasswordVisualTransformation())
-        Button(enabled = !busy && selected != null, onClick = { perform {
+        TextButton(enabled = !busy && !transitioning, onClick = { perform {
+            assignments = EnterpriseAuth.assignments()
+            selected = assignments.firstOrNull { it.vehicleId == selected?.vehicleId } ?: assignments.firstOrNull()
+            invalidateVerification(); message = "Assignments refreshed. Verify the assigned ESP again; reset local pairing if hardware was replaced."
+        } }) { Text("Refresh assignments") }
+        OutlinedTextField(ip, { ip = it; invalidateVerification() }, enabled = !busy && !transitioning, label = { Text("ESP IP (manual fallback)") }, singleLine = true)
+        OutlinedTextField(setupPassword, { setupPassword = it; invalidateVerification() }, enabled = !busy && !transitioning, label = { Text("ESP setup password") }, visualTransformation = PasswordVisualTransformation())
+        Row(Modifier.toggleable(value = manualConfirmation, enabled = !busy && !transitioning, role = Role.Checkbox, onValueChange = {
+                manualConfirmation = it; manualDeviceId = ""; invalidateVerification()
+            })) {
+            Checkbox(checked = manualConfirmation, enabled = !busy && !transitioning, onCheckedChange = null)
+            Text("Temporary: manually confirm ID for firmware without device_id", Modifier.weight(1f))
+        }
+        if (manualConfirmation) {
+            Text("The app cannot confirm this camera's identity without firmware support. Check its label and enter the administrator-assigned ID. A reported mismatch will still be rejected.")
+            OutlinedTextField(manualDeviceId, { manualDeviceId = it; invalidateVerification() }, enabled = !busy && !transitioning,
+                label = { Text("Assigned device ID (case-sensitive)") }, singleLine = true)
+        }
+        Button(enabled = !busy && !transitioning && selected != null, onClick = { perform {
             message = "Trying saved IP, then automatic discovery…"
-            ip = EspConnection.connect(context, driver, selected!!, setupPassword)
-            EnterpriseAuth.selection.value = selected; message = "ESP verified at $ip. Camera ready."
+            ip = EspConnection.connect(context, driver, selected!!, setupPassword, manualDeviceId.takeIf { manualConfirmation })
+            EnterpriseAuth.selection.value = selected; message = if (manualConfirmation) "Camera ready at $ip. Manual ID confirmation enabled." else "ESP verified at $ip. Camera ready."
         } }) { Text("Find my ESP automatically") }
-        Button(enabled = !busy && selected != null, onClick = { perform {
-            EspConnection.verify(context, selected!!, driver, ip, setupPassword)
-            EnterpriseAuth.selection.value = selected; message = "ESP identity and camera verified."
+        Button(enabled = !busy && !transitioning && selected != null, onClick = { perform {
+            val status = EspConnection.verify(context, selected!!, driver, ip, setupPassword, manualDeviceId.takeIf { manualConfirmation })
+            EnterpriseAuth.selection.value = selected
+            message = if (status.isNull("device_id") || status.optString("device_id").isBlank()) "Camera ready. Device ID manually confirmed; firmware identity unavailable."
+                else "ESP identity and camera verified."
         } }) { Text("Verify entered IP") }
         HorizontalDivider()
         Text("Phone hotspot setup", style = MaterialTheme.typography.titleMedium)
@@ -136,7 +164,7 @@ fun EnterpriseApp() {
         suspend fun save(body: JSONObject) {
             val assignment = selected ?: error("Select an assignment first")
             val status = EspConnection.status(context, ip, setupPassword)
-            require(status.optString("device_id") == assignment.deviceId) { "ESP identity missing or mismatched. Update firmware before provisioning." }
+            requireEspIdentity(status.optString("device_id").takeUnless { status.isNull("device_id") }, assignment.deviceId, manualDeviceId.takeIf { manualConfirmation })
             EspConnection.clear()
             try {
                 val result = EspConnection.request(context, ip, setupPassword, body)
@@ -147,28 +175,28 @@ fun EnterpriseApp() {
                 message = "Save outcome unknown: ${e.message}. Check ESP status before retrying; it may already have saved and restarted."
             }
         }
-        Button(enabled = !busy && selected != null, onClick = { perform {
+        Button(enabled = !busy && !transitioning && selected != null, onClick = { perform {
             EspConnection.validateCredentials(ssid, password)
             save(JSONObject().put("mode", "sta").put("ssid", ssid).put("password", password))
         } }) { Text("Save hotspot settings") }
         Row {
-            TextButton(enabled = !busy && selected != null, onClick = { perform { save(JSONObject().put("mode", "sta")) } }) { Text("Use saved Wi-Fi") }
-            TextButton(enabled = !busy && selected != null, onClick = { perform { save(JSONObject().put("mode", "ap")) } }) { Text("Use ESP hotspot") }
+            TextButton(enabled = !busy && !transitioning && selected != null, onClick = { perform { save(JSONObject().put("mode", "sta")) } }) { Text("Use saved Wi-Fi") }
+            TextButton(enabled = !busy && !transitioning && selected != null, onClick = { perform { save(JSONObject().put("mode", "ap")) } }) { Text("Use ESP hotspot") }
         }
-        TextButton(enabled = !busy && selected != null, onClick = { perform { save(JSONObject().put("mode", "ap").put("forget", true)) } }) { Text("Forget ESP Wi-Fi credentials") }
+        TextButton(enabled = !busy && !transitioning && selected != null, onClick = { perform { save(JSONObject().put("mode", "ap").put("forget", true)) } }) { Text("Forget ESP Wi-Fi credentials") }
         TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }) { Text("Open Android Wi-Fi / hotspot settings") }
         Text("Recovery: wait about 30 seconds, reconnect to FatigueSense_Cam, then check 192.168.4.1 and correct the settings.")
         Text(message)
         if (serviceMessage.isNotBlank()) Text(serviceMessage)
         val verified by EspConnection.verifiedId.collectAsState()
-        Button(enabled = !busy && selected != null && verified == selected?.deviceId, onClick = {
+        Button(enabled = !busy && !transitioning && selected != null && verified == selected?.deviceId, onClick = {
             EnterpriseAuth.selection.value = selected; onDone()
         }) { Text("Open monitoring dashboard") }
-        TextButton(enabled = !busy && selected != null, onClick = { perform {
+        TextButton(enabled = !busy && !transitioning && selected != null, onClick = { perform {
             EnterpriseDatabase.get(context).dao().forgetDevice(driver.orgId, selected!!.vehicleId)
             EspConnection.clear(); message = "Local pairing reset. Verify the administrator-assigned device again."
         } }) { Text("Reset local pairing") }
-        TextButton(enabled = !busy, onClick = onLogout) { Text("Sign out") }
+        TextButton(enabled = !busy && !transitioning, onClick = onLogout) { Text("Sign out") }
     }
 }
 

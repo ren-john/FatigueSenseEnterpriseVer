@@ -92,6 +92,9 @@ object FatigueManager {
     private var analyzer: FatigueAnalyzer? = null
     private var streamJob:   Job? = null
     private var watchdogJob: Job? = null
+    private var retirement: Job? = null
+
+    suspend fun awaitStopped() { retirement?.join() }
 
     // ── SharedPreferences & Room DB ───────────────────────────────────────────
     private var prefs: SharedPreferences? = null
@@ -271,6 +274,7 @@ object FatigueManager {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     fun start(context: Context) {
+        check(retirement?.isCompleted != false) { "Previous monitoring pipeline is still stopping." }
         val enterpriseSession = EnterpriseAuth.session.value ?: return
         if (EspConnection.verifiedId.value != enterpriseSession.assignment.deviceId) return
         if (_isMonitoring.value) {
@@ -329,6 +333,7 @@ object FatigueManager {
 
             // 3. Forward stream status & stream FPS
             launch { s.streamStatus.collect {
+                if (!_isMonitoring.value) return@collect
                 _streamStatus.value = it
                 if (it == StreamStatus.LOST) { EspConnection.blockCommands(); DetectionJournal.gap(enterpriseSession.sessionId) }
             } }
@@ -513,16 +518,18 @@ object FatigueManager {
         _isMonitoring.value = false
 
         val stoppingJob = streamJob
+        val stoppingWatchdog = watchdogJob
         val stoppingAnalyzer = analyzer
-        streamer?.stopStream()
         stoppingJob?.cancel()
+        streamer?.stopStream()
         watchdogJob?.cancel()
         streamJob   = null
         watchdogJob = null
 
         // Cancellation cannot interrupt native Interpreter.run(). Join every
         // pipeline child before releasing the interpreter and face detector.
-        managerScope.launch {
+        retirement = managerScope.launch {
+            stoppingWatchdog?.join()
             retirePipeline(stoppingJob) { stoppingAnalyzer?.close() }
             Log.i(TAG, "Monitoring resources released after inference completed")
         }

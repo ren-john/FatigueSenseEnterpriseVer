@@ -20,17 +20,25 @@ import kotlin.coroutines.resume
 object EspConnection {
     val host = MutableStateFlow("")
     val verifiedId = MutableStateFlow<String?>(null)
+    val configuredAssignment = MutableStateFlow<Assignment?>(null)
     private var app: Context? = null
     private var setupPasswordInMemory: String? = null
+    private var manualIdentity: Pair<Assignment, String>? = null
     val network: Network? get() = app?.let { context ->
         host.value.takeIf { it.isNotBlank() }?.let { runCatching { route(context, it) }.getOrNull() }
     }
-    fun clear() { verifiedId.value = null; host.value = ""; setupPasswordInMemory = null }
+    fun clear() { verifiedId.value = null; configuredAssignment.value = null; host.value = ""; setupPasswordInMemory = null; manualIdentity = null }
     fun blockCommands() { verifiedId.value = null }
+    suspend fun prepare(context: Context, driver: Driver, assignment: Assignment) {
+        check(configuredAssignment.value == assignment) { "Verify the assigned ESP first." }
+        connect(context, driver, assignment, setupPasswordInMemory ?: error("Verify ESP setup access again."),
+            manualIdentity?.takeIf { it.first == assignment }?.second)
+    }
     suspend fun streamUrl(context: Context, session: DriverSession): String {
         val password = setupPasswordInMemory ?: error("Verify ESP setup access again.")
         check(EnterpriseAuth.session.value?.sessionId == session.sessionId) { "Monitoring session changed" }
-        val address = connect(context, session.driver, session.assignment, password)
+        val address = connect(context, session.driver, session.assignment, password,
+            manualIdentity?.takeIf { it.first == session.assignment }?.second)
         return "http://$address:81/stream"
     }
     fun validIp(input: String): String {
@@ -87,12 +95,12 @@ object EspConnection {
             JSONObject(String(bytes, Charsets.UTF_8))
         } finally { connection.disconnect() }
     }
-    suspend fun verify(context: Context, assignment: Assignment, driver: Driver, ip: String, password: String): JSONObject {
+    suspend fun verify(context: Context, assignment: Assignment, driver: Driver, ip: String, password: String,
+                       manualDeviceId: String? = null): JSONObject {
+        verifiedId.value = null
         val address = validIp(ip)
         val result = status(context, address, password)
-        require(result.optString("device_id") == assignment.deviceId) {
-            "ESP identity missing or does not match the assigned device. Firmware must expose device_id."
-        }
+        requireEspIdentity(result.optString("device_id").takeUnless { result.isNull("device_id") }, assignment.deviceId, manualDeviceId)
         require(!result.optBoolean("restarting")) { "ESP is restarting. Wait and retry." }
         require(result.optString("mode") == "ap" || (result.optString("mode") == "sta" && result.optBoolean("connected"))) {
             "Settings are saved, but the ESP has not joined the hotspot yet."
@@ -109,7 +117,9 @@ object EspConnection {
             result.getString("mode"), previous?.pairedAt ?: now, now))
         app = context.applicationContext; host.value = address
         setupPasswordInMemory = password
+        manualIdentity = manualDeviceId?.trim()?.let { assignment to it }
         verifiedId.value = assignment.deviceId
+        configuredAssignment.value = assignment
         return result
     }
     @Suppress("DEPRECATION")
@@ -155,14 +165,15 @@ object EspConnection {
         }
     } ?: emptyList()
 
-    suspend fun connect(context: Context, driver: Driver, assignment: Assignment, password: String): String {
+    suspend fun connect(context: Context, driver: Driver, assignment: Assignment, password: String,
+                        manualDeviceId: String? = null): String {
         val saved = EnterpriseDatabase.get(context).dao().device(driver.orgId, assignment.vehicleId)
         if (saved != null && saved.espId == assignment.deviceId) {
-            try { verify(context, assignment, driver, saved.lastKnownIp, password); return saved.lastKnownIp }
+            try { verify(context, assignment, driver, saved.lastKnownIp, password, manualDeviceId); return saved.lastKnownIp }
             catch (e: CancellationException) { throw e } catch (_: Exception) { /* discover current address */ }
         }
         for (ip in discover(context, assignment.deviceId)) {
-            try { verify(context, assignment, driver, ip, password); return ip }
+            try { verify(context, assignment, driver, ip, password, manualDeviceId); return ip }
             catch (e: CancellationException) { throw e } catch (_: Exception) { /* offer manual fallback */ }
         }
         error("Could not find the assigned ESP. Enter its IP manually or reconnect to the recovery hotspot.")

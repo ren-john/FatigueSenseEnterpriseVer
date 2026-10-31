@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.fatiguesense.enterprise.MainActivity
@@ -15,6 +16,7 @@ import com.example.fatiguesense.enterprise.ml.ActiveAlertState
 import com.example.fatiguesense.enterprise.enterprise.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 
 /**
  * Foreground service that keeps the monitoring pipeline alive when the app is
@@ -29,27 +31,42 @@ class FatigueService : Service() {
         const val CHANNEL_ID      = "fatiguesense_monitoring"
         const val NOTIFICATION_ID = 1001
         val message = MutableStateFlow("")
+        val transitioning = MutableStateFlow(false)
+        private val alive = MutableStateFlow(false)
         var cleanup: Job? = null
+        suspend fun stopAndAwait(context: Context) {
+            if (context.stopService(Intent(context, FatigueService::class.java))) alive.first { !it }
+            cleanup?.join()
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var startedSession: DriverSession? = null
+    private var terminalMessage: String? = null
 
     override fun onCreate() {
         super.onCreate()
+        alive.value = true
+        transitioning.value = true
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         scope.launch {
             try {
                 cleanup?.join()
+                FatigueManager.awaitStopped()
                 DetectionJournal.awaitInitialized()
-                message.value = "Authorizing monitoring session…"
+                val driver = EnterpriseAuth.driver.value ?: error("Sign in first")
+                message.value = "Finishing previous session…"
+                SessionClosures.sync(EnterpriseDatabase.get(this@FatigueService).dao(), driver)
                 val assignment = EnterpriseAuth.selection.value ?: error("Select and verify your assigned ESP first.")
-                check(EspConnection.verifiedId.value == assignment.deviceId) { "Verify ESP connection first." }
+                message.value = "Checking assigned ESP…"
+                EspConnection.prepare(this@FatigueService, driver, assignment)
+                message.value = "Authorizing monitoring session…"
                 startedSession = EnterpriseAuth.begin(assignment)
                 val session = startedSession!!
                 EnterpriseDatabase.get(this@FatigueService).dao().saveSession(LocalSession(session.sessionId, session.driver.uid, session.driver.orgId))
                 message.value = ""
                 FatigueManager.start(this@FatigueService)
+                transitioning.value = false
                 while (isActive) {
                     UploadScheduler.enqueue(this@FatigueService)
                     try {
@@ -60,7 +77,8 @@ class FatigueService : Service() {
                     } catch (e: CancellationException) { throw e }
                       catch (e: ApiError) {
                         if (e.status == 401 || e.status == 403) {
-                            message.value = "Monitoring access ended. Sign in again or contact your administrator."
+                            terminalMessage = "Monitoring access ended. Sign in again or contact your administrator."
+                            message.value = terminalMessage!!
                             stopSelf(); return@launch
                         }
                         message.value = "Monitoring locally; dashboard update pending."
@@ -70,7 +88,10 @@ class FatigueService : Service() {
                     delay(30000)
                 }
             } catch (e: CancellationException) { throw e }
-              catch (e: Exception) { message.value = e.message ?: "Session authorization failed"; stopSelf() }
+              catch (e: Exception) {
+                  terminalMessage = e.message ?: "Session authorization failed"
+                  message.value = terminalMessage!!; stopSelf()
+              }
         }
     }
 
@@ -80,15 +101,36 @@ class FatigueService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        transitioning.value = true
         FatigueManager.stop()
         scope.cancel()
-        val ended = startedSession
+        val previousCleanup = cleanup
         cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            DetectionJournal.stop()
-            if (EnterpriseAuth.session.value == ended) EnterpriseAuth.session.value = null
-            if (ended != null) EnterpriseDatabase.get(applicationContext).dao().closeSession(ended.sessionId, System.currentTimeMillis())
-            UploadScheduler.enqueue(applicationContext)
+            try {
+                previousCleanup?.join()
+                scope.coroutineContext[Job]?.join()
+                FatigueManager.awaitStopped()
+                DetectionJournal.stop()
+                val ended = startedSession
+                if (EnterpriseAuth.session.value == ended) EnterpriseAuth.session.value = null
+                val dao = EnterpriseDatabase.get(applicationContext).dao()
+                if (ended != null) {
+                    dao.closeSession(ended.sessionId, System.currentTimeMillis())
+                    message.value = "Closing monitoring session…"
+                    try {
+                        SessionClosures.sync(dao, ended.driver)
+                        message.value = ""
+                    } catch (e: Exception) {
+                        message.value = "Monitoring stopped. Server closure pending; reconnect and retry Start."
+                    }
+                }
+            } finally {
+                UploadScheduler.enqueue(applicationContext)
+                terminalMessage?.let { message.value = it }
+                transitioning.value = false
+            }
         }
+        alive.value = false
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

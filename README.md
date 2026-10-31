@@ -9,7 +9,7 @@ stay local; cloud payloads contain detection records only.
 
 - Firebase email/password login/recovery, driver claims and server access/assignment gate.
 - Room database for paired ESP ID, verified IP, identity-bound events and pending uploads.
-- Saved-IP check, mDNS/Android NSD discovery and manual fallback, all checking ESP identity.
+- Saved-IP check, mDNS/Android NSD discovery and manual IP fallback, checking ESP identity by default.
 - Native Wi-Fi provisioning, save/restart status, AP/STA switching, forget/recovery controls.
 - Dynamic stream/control address and automatic identity verification on reconnection.
 - Durable eye/yawn trigger edges and continuous three-minute no-face observation.
@@ -30,7 +30,32 @@ See [the integration setup and validation](docs/driver-integration.md) and
 are implemented and tested with isolated Firebase services. Apply the backend's
 rules/indexes and rebuild/restart it before real-project use. No live Firebase
 deployment occurred. ESP identity/mDNS extensions and physical hardware validation
-remain separate firmware requirements; identity checks are retained.
+remain separate firmware requirements. Strict identity checking is the default;
+an explicit temporary manual confirmation supports firmware that omits `device_id`.
+A firmware-reported mismatch is always rejected.
+
+### Monitoring and hardware updates — 2026-10-31
+
+Stop now persists and sends session closure independently of detection backlog.
+Start retries pending closures and rechecks the ESP before authorizing a new
+session; native pipeline cleanup completes before replacement monitoring starts.
+Offline closure remains queued. Authentication, session exclusivity, historical
+event uploads, and detection/calibration behavior are retained.
+
+After an Admin or Supervisor replaces hardware in web **Vehicles → Edit**, open
+**Device / account → Refresh assignments**, reset the old local pairing, then
+verify the replacement IP and setup password. Settings displays the assigned ID.
+
+For firmware without `device_id`, enable **Temporary: manually confirm ID**, enter
+the administrator-assigned ID exactly (case-sensitive), then verify the IP.
+This confirms your input, not the camera's physical identity. Camera/network and
+backend assignment checks still apply. Confirmation survives reconnects in memory
+and clears on setup changes/sign-out/process restart; it does not bypass login.
+Prefer firmware identity support for ongoing use.
+
+Rebuild/restart the sibling backend and apply its updated Firestore rules before
+using hardware replacement. Install the rebuilt Android APK. No live Firebase
+deployment is performed by these source changes.
 
 With a placeholder backend URL, the APK opens to a login screen explaining incomplete configuration.
 No mock account or authentication bypass is provided.

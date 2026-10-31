@@ -1,5 +1,15 @@
 # Android implementation status — 2026-10-18
 
+2026-10-31 update: Stop/Start now flushes durable session closures independently
+of detection backlog and waits for old streaming/native/watchdog work to finish.
+Start rechecks the configured ESP. The web/backend support atomic manager-only
+hardware replacement while stopped, retaining historical attribution. Android
+adds assignment refresh, actual assigned ID display, and explicit manual ID
+confirmation only when firmware omits identity; reported mismatches still fail.
+See [current usage and rollout](../README.md#monitoring-and-hardware-updates--2026-10-31).
+Validation: 37 unit tests, 11 API 37 emulator tests, debug build and lint pass.
+Physical ESP/phone and live Firebase acceptance remain unverified.
+
 2026-10-30 configuration update: the application ID is now
 `com.fatiguesense.enterprise`, matching the downloaded Android registration.
 Firebase Auth now uses `app/google-services.json` through the Google Services

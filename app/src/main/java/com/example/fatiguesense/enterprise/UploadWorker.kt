@@ -39,16 +39,13 @@ class UploadWorker(context: Context, params: WorkerParameters): CoroutineWorker(
             EnterpriseAuth.initialize(applicationContext)
             val driver = EnterpriseAuth.restore() ?: return Result.success()
             identity = driver
+            SessionClosures.sync(dao, driver)
             status("Uploading pending detections…")
             // Bounded run. Periodic recovery or another event schedules the next batch.
             repeat(10) {
                 val events = dao.pending(driver.uid, driver.orgId).take(20).toMutableList()
                 if (events.isEmpty()) {
-                    for (ended in dao.pendingClosures(driver.uid, driver.orgId)) {
-                        val closed = EnterpriseAuth.call("mobileEndSession", JSONObject().put("sessionId", ended.sessionId).put("endedAt", ended.endedAt), driver.uid)
-                        check(closed.optBoolean("success")) { "Session closure not acknowledged" }
-                        dao.acknowledgeSession(ended.sessionId)
-                    }
+                    SessionClosures.sync(dao, driver)
                     status("Sync complete", true)
                     return Result.success()
                 }

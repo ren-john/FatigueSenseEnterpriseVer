@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.example.fatiguesense.enterprise.ml.Esp32AlertSender
 import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.ml.StreamStatus
+import com.example.fatiguesense.enterprise.enterprise.EnterpriseAuth
 import com.example.fatiguesense.enterprise.ui.components.*
 import com.example.fatiguesense.enterprise.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,7 @@ fun SettingsScreen() {
     var showClearDialog by remember { mutableStateOf(false) }
 
     val streamStatus by FatigueManager.streamStatus.collectAsState()
+    val assignment by EnterpriseAuth.selection.collectAsState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -87,7 +89,7 @@ fun SettingsScreen() {
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "DEVICE ID: FS-ESP32-9921 // STATUS: ${when (streamStatus) {
+                            text = "DEVICE ID: ${assignment?.deviceId ?: "Not assigned"} // STATUS: ${when (streamStatus) {
                             StreamStatus.STREAMING  -> "LINK STABLE"
                             StreamStatus.CONNECTING -> "CONNECTING"
                             StreamStatus.LOST       -> "DISCONNECTED"
