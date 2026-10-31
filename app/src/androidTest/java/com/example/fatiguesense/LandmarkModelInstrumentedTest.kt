@@ -1,59 +1,66 @@
 package com.example.fatiguesense.enterprise
 
+import android.graphics.Bitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.example.fatiguesense.enterprise.ml.LandmarkModel
+import com.example.fatiguesense.enterprise.ml.MediaPipeLandmarker
+import com.example.fatiguesense.enterprise.ml.FatigueAnalyzer
+import com.example.fatiguesense.enterprise.ml.FrameQuality
+import kotlinx.coroutines.runBlocking
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.tensorflow.lite.DataType
-import org.tensorflow.lite.Interpreter
 
 @RunWith(AndroidJUnit4::class)
 class LandmarkModelInstrumentedTest {
-    @Test fun legacyModelContractAndInference() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val bytes = context.assets.open(com.example.fatiguesense.enterprise.ml.LegacyLandmarkModel.ASSET).use { it.readBytes() }
-        val model = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder())
-        model.put(bytes).rewind()
-        Interpreter(model, Interpreter.Options().apply { numThreads = 4 }).use { interpreter ->
-            assertArrayEquals(intArrayOf(1, 128, 128, 3), interpreter.getInputTensor(0).shape())
-            assertArrayEquals(intArrayOf(1, 24), interpreter.getOutputTensor(0).shape())
-            assertEquals(DataType.FLOAT32, interpreter.getInputTensor(0).dataType())
-            assertEquals(DataType.FLOAT32, interpreter.getOutputTensor(0).dataType())
-            val bitmap = android.graphics.Bitmap.createBitmap(256, 256, android.graphics.Bitmap.Config.ARGB_8888)
-            try {
-                val points = com.example.fatiguesense.enterprise.ml.LegacyLandmarkModel.infer(
-                    bitmap, android.graphics.Rect(40, 40, 200, 200), interpreter)
-                assertEquals(12, points.size)
-                assertTrue(points.all { it.x.isFinite() && it.y.isFinite() })
-            } finally { bitmap.recycle() }
-        }
-    }
-
-    @Test fun bundledModelMatchesDesktopValidationPrediction() {
+    @Test fun bundledMediaPipeModelDetectsRealFaceAndRejectsBlankFrame() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val bytes = instrumentation.targetContext.assets.open(LandmarkModel.ASSET).use { it.readBytes() }
-        val model = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder())
-        model.put(bytes).rewind()
-        val inputBytes = instrumentation.context.assets.open("landmark32_input.bin").use { it.readBytes() }
-        val expectedBytes = instrumentation.context.assets.open("landmark32_expected.bin").use { it.readBytes() }
-        val input = ByteBuffer.allocateDirect(inputBytes.size).order(ByteOrder.nativeOrder())
-        input.put(inputBytes).rewind()
-        val expected = ByteBuffer.wrap(expectedBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
-        Interpreter(model, Interpreter.Options().apply { numThreads = 4 }).use { interpreter ->
-            assertArrayEquals(intArrayOf(1, 3, 192, 192), interpreter.getInputTensor(0).shape())
-            assertArrayEquals(intArrayOf(1, 32, 2), interpreter.getOutputTensor(0).shape())
-            assertEquals(DataType.FLOAT32, interpreter.getInputTensor(0).dataType())
-            assertEquals(DataType.FLOAT32, interpreter.getOutputTensor(0).dataType())
-            val output = Array(1) { Array(32) { FloatArray(2) } }
-            interpreter.run(input, output)
-            output[0].forEach { point -> point.forEach { value ->
-                assertTrue(value.isFinite())
-                assertEquals(expected.get(), value, 1e-4f)
-            } }
+        // Retained real validation crop, planar RGB float32 /255, 192 x 192.
+        val bytes = instrumentation.context.assets.open("landmark32_input.bin").use { it.readBytes() }
+        val rgb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+        val plane = 192 * 192
+        val pixels = IntArray(plane) { i ->
+            fun channel(offset: Int) = (rgb.get(i + offset) * 255f).toInt().coerceIn(0, 255)
+            (255 shl 24) or (channel(0) shl 16) or (channel(plane) shl 8) or channel(plane * 2)
+        }
+        val face = Bitmap.createBitmap(pixels, 192, 192, Bitmap.Config.ARGB_8888)
+        val blank = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
+        try {
+            MediaPipeLandmarker(instrumentation.targetContext).use { landmarker ->
+                val detection = landmarker.detect(face)
+                assertNotNull("Official model should find the real validation face", detection)
+                assertEquals(32, detection!!.points.size)
+                assertTrue(detection.points.all { it.x.isFinite() && it.y.isFinite() })
+                assertEquals(32, detection.cropPoints.size)
+                assertTrue(detection.boundingBox.width() > 0 && detection.boundingBox.height() > 0)
+                assertTrue(detection.pose.yaw.isFinite())
+                assertTrue(detection.pose.pitch.isFinite())
+                assertTrue(detection.pose.roll.isFinite())
+                assertFalse("Inference must preserve the preview bitmap", face.isRecycled)
+                assertNull(landmarker.detect(blank))
+                assertFalse(blank.isRecycled)
+            }
+            val analyzer = FatigueAnalyzer(instrumentation.targetContext)
+            try {
+                runBlocking { analyzer.processFrame(face) }
+                assertNotNull(analyzer.result.value.boundingBox)
+                assertEquals(32, analyzer.result.value.landmarks.size)
+                assertTrue(analyzer.result.value.earValid)
+                assertTrue(analyzer.result.value.marValid)
+                assertTrue(analyzer.result.value.headYaw.isFinite())
+                runBlocking { analyzer.processFrame(blank) }
+                assertEquals(FrameQuality.NO_FACE, analyzer.result.value.qualityStatus)
+                assertNull(analyzer.result.value.boundingBox)
+                assertNotNull("No-face frames must reach absence tracking", analyzer.lastObservation)
+                assertFalse(analyzer.result.value.isFatigueAlert)
+            } finally {
+                analyzer.close()
+            }
+        } finally {
+            face.recycle()
+            blank.recycle()
         }
     }
 }

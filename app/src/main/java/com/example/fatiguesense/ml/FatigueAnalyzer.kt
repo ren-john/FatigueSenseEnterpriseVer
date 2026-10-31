@@ -5,20 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
 import android.util.Log
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.DataType
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
 
 // ─── Calibration Enums ────────────────────────────────────────────────────────
 
@@ -38,7 +28,7 @@ enum class FrameQuality {
     NO_FACE,
     /** Turned head: landmark monitoring continues; baseline collection pauses. */
     HEAD_TURNED,
-    /** Edge crop: padded inference continues; baseline collection pauses. */
+    /** Face at the frame edge: valid points continue monitoring; calibration pauses. */
     FACE_CLIPPED,
     /** Frame would have been accepted, but is still in warmup phase. */
     WARMING_UP_ACCEPTED,
@@ -76,14 +66,10 @@ data class AnalysisResult(
 // ─── FatigueAnalyzer ──────────────────────────────────────────────────────────
 
 /**
- * Runs ML Kit face detection + custom TFLite landmark inference on each frame.
- *
- * ModelProfile selects the matching asset, crop and formulas.
- * Coordinates32 layout: 32 points in iBUG order 36..67.
- *   Points 0–5 and 6–11 are the two eyes; points 12–31 are the mouth.
- * Input is planar RGB float32 [1,3,192,192]; output is [1,32,2].
- * Side views run inference. Eye selection matches the Python geometry heuristic;
- * it is not a visibility score. Only baseline collection requires a frontal face.
+ * Uses MediaPipe for full-frame face detection, head pose, and eye/mouth landmarks.
+ * The largest detected face is used consistently for boxes, pose, and EAR/MAR.
+ * MediaPipe points are mapped to the shared 32-point eye/lip layout for EAR/MAR.
+ * Side views continue monitoring; only baseline collection requires a frontal face.
  *
  * Adaptive calibration pipeline:
  *   1. Calibration gate: pause baseline collection for turned/clipped faces.
@@ -111,23 +97,7 @@ class FatigueAnalyzer(
     private val _result = MutableStateFlow(AnalysisResult())
     val result: StateFlow<AnalysisResult> = _result
 
-    // ── ML Kit face detector — FAST mode ─────────────────────────────────────
-    // Euler angles (headEulerAngleX/Y/Z) are returned by ML Kit for every
-    // detected Face regardless of classification mode.
-    private val faceDetectorOptions = FaceDetectorOptions.Builder()
-        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
-        .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
-        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-        .build()
-
-    private val faceDetector = FaceDetection.getClient(faceDetectorOptions)
-
-    private var interpreter: Interpreter? = null
-    private val inputBuffer = ByteBuffer.allocateDirect(LandmarkModel.INPUT_BYTES)
-        .order(ByteOrder.nativeOrder())
-    private val outputArray = Array(1) { Array(LandmarkModel.POINT_COUNT) { FloatArray(2) } }
-    private var framePixels = IntArray(0)
+    private val landmarker = MediaPipeLandmarker(context)
 
     // ── FPS tracking ─────────────────────────────────────────────────────────
     private var lastFrameTime = System.currentTimeMillis()
@@ -188,7 +158,6 @@ class FatigueAnalyzer(
                 earThreshold
             Log.i(TAG, "Restored prior baseline EAR=$priorBaselineEar → threshold=$computedEarThreshold")
         }
-        initializeInterpreter()
     }
 
     private fun calculateAdaptiveThreshold(rawBaseline: Float): Float {
@@ -234,38 +203,6 @@ class FatigueAnalyzer(
         }
     }
 
-    private fun initializeInterpreter() {
-        // CPU avoids GPU delegate thread affinity across coroutine dispatchers.
-        // This model has only built-in LiteRT operators; no Flex runtime is needed.
-        val candidate = Interpreter(loadModelFile(context, ModelProfile.asset),
-            Interpreter.Options().apply { numThreads = 4 })
-        try {
-            val input = candidate.getInputTensor(0)
-            val output = candidate.getOutputTensor(0)
-            require(input.dataType() == DataType.FLOAT32 &&
-                input.shape().contentEquals(ModelProfile.inputShape)) {
-                "Unexpected landmark input: ${input.shape().contentToString()} ${input.dataType()}"
-            }
-            require(output.dataType() == DataType.FLOAT32 &&
-                output.shape().contentEquals(ModelProfile.outputShape)) {
-                "Unexpected landmark output: ${output.shape().contentToString()} ${output.dataType()}"
-            }
-            interpreter = candidate
-            Log.i(TAG, "Loaded ${ModelProfile.label}: ${ModelProfile.asset}, CPU (4 threads)")
-        } catch (e: Exception) {
-            candidate.close()
-            throw e
-        }
-    }
-
-    private fun loadModelFile(context: Context, filename: String): ByteBuffer =
-        context.assets.openFd(filename).use { descriptor ->
-            FileInputStream(descriptor.fileDescriptor).use { stream ->
-                stream.channel.map(FileChannel.MapMode.READ_ONLY,
-                    descriptor.startOffset, descriptor.declaredLength)
-            }
-        }
-
     var lastObservation: AnalysisResult? = null
         private set
 
@@ -281,10 +218,9 @@ class FatigueAnalyzer(
         }
 
         try {
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val faces = Tasks.await(faceDetector.process(image))
+            val detection = landmarker.detect(bitmap)
 
-            if (faces.isEmpty()) {
+            if (detection == null) {
                 consecutiveLowEarFrames = 0
                 consecutiveYawnFrames = 0
                 yawnActive = false
@@ -303,19 +239,16 @@ class FatigueAnalyzer(
                 return@withContext
             }
 
-            // Legacy selects by width; coordinates32 matches Python largest-area selection.
-            val face = faces.maxByOrNull {
-                it.boundingBox.width().toLong() * (if (ModelProfile.legacy) 1 else it.boundingBox.height())
-            }!!
-            val boundingBox = face.boundingBox
+            val boundingBox = detection.boundingBox
+            val pose = detection.pose
 
             val eligibility = LandmarkModel.frameEligibility(
                 boundingBox.left.toFloat(), boundingBox.top.toFloat(),
                 boundingBox.right.toFloat(), boundingBox.bottom.toFloat(),
                 bitmap.width, bitmap.height,
-                face.headEulerAngleY, face.headEulerAngleX, face.headEulerAngleZ,
+                pose.yaw, pose.pitch, pose.roll,
             )
-            if (!eligibility.runLandmarks || (ModelProfile.legacy && !eligibility.calibrate)) {
+            if (!eligibility.runLandmarks) {
                 consecutiveLowEarFrames = 0
                 consecutiveYawnFrames = 0
                 yawnActive = false
@@ -328,46 +261,17 @@ class FatigueAnalyzer(
                 return@withContext
             }
 
-            val modelPoints = try {
-                if (ModelProfile.legacy) {
-                    LegacyLandmarkModel.infer(bitmap, boundingBox, checkNotNull(interpreter))
-                } else {
-                    val crop = LandmarkModel.crop(
-                        boundingBox.left.toFloat(), boundingBox.top.toFloat(),
-                        boundingBox.right.toFloat(), boundingBox.bottom.toFloat(),
-                    )
-                    val pixelCount = bitmap.width * bitmap.height
-                    if (framePixels.size != pixelCount) framePixels = IntArray(pixelCount)
-                    bitmap.getPixels(framePixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                    LandmarkModel.writeInput(framePixels, bitmap.width, bitmap.height, crop, inputBuffer)
-                    checkNotNull(interpreter) { "Landmark interpreter is unavailable" }
-                        .run(inputBuffer, outputArray)
-                    LandmarkModel.decode(outputArray[0], crop)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Landmark inference failed", e)
-                consecutiveLowEarFrames = 0
-                consecutiveYawnFrames = 0
-                yawnActive = false
-                _result.value = AnalysisResult(boundingBox = boundingBox, fps = currentFps,
-                    qualityStatus = FrameQuality.INFERENCE_ERROR,
-                    calibrationState = calibrationState, warmupProgress = warmupProgress())
-                return@withContext
-            }
+            val modelPoints = detection.points
+            val cropPoints = detection.cropPoints
             val pts = modelPoints.map { PointF(it.x, it.y) }
-            val cropPoints = if (ModelProfile.legacy) emptyList() else outputArray[0].map {
-                LandmarkModel.Point(it[0] * (LandmarkModel.SIZE - 1), it[1] * (LandmarkModel.SIZE - 1))
-            }
-            val selectedEye = if (ModelProfile.legacy) {
-                LandmarkModel.SelectedEye(LegacyLandmarkModel.ear(modelPoints), LandmarkModel.EyeSelection.BOTH)
-            } else LandmarkModel.selectEyes(
+            val selectedEye = LandmarkModel.selectEyes(
                 LandmarkModel.assessEye(cropPoints, modelPoints, 0, bitmap.width, bitmap.height),
                 LandmarkModel.assessEye(cropPoints, modelPoints, 6, bitmap.width, bitmap.height),
             )
             // Keep unavailable UI values finite; validity controls alerts and PERCLOS.
             val avgEAR = if (selectedEye.valid) selectedEye.ear else 0f
-            val marValid = ModelProfile.legacy || LandmarkModel.validMouth(cropPoints, modelPoints, bitmap.width, bitmap.height)
-            val mar = if (ModelProfile.legacy) LegacyLandmarkModel.mar(modelPoints) else if (marValid) LandmarkModel.mouthAspectRatio(cropPoints) else 0f
+            val marValid = LandmarkModel.validMouth(cropPoints, modelPoints, bitmap.width, bitmap.height)
+            val mar = if (marValid) LandmarkModel.mouthAspectRatio(cropPoints) else 0f
 
             // ── Warmup Accumulator #2 ────────────────────────────────────────
             // Only accumulate during WARMING_UP if avgEAR >= MIN_WARMUP_EAR (filters blinks & closed eyes)
@@ -408,7 +312,7 @@ class FatigueAnalyzer(
             else
                 computedEarThreshold
 
-            val eyeClosed = selectedEye.valid && avgEAR < activeThreshold && (!ModelProfile.legacy || avgEAR > 0f)
+            val eyeClosed = selectedEye.valid && avgEAR < activeThreshold
             if (eyeClosed) consecutiveLowEarFrames++ else consecutiveLowEarFrames = 0
             // MAR qualification is frame-hysteretic, but yawn frequency is
             // explicitly time-based so it is stable across camera frame rates.
@@ -455,7 +359,7 @@ class FatigueAnalyzer(
                 earValid             = selectedEye.valid,
                 marValid             = marValid,
                 eyeSelection         = selectedEye.selection,
-                headYaw              = face.headEulerAngleY,
+                headYaw              = pose.yaw,
                 isFatigueAlert       = isFatigueAlert,
                 isYawnAlert          = isYawnAlert,
                 yawnsInWindow        = yawnsInWindow,
@@ -472,6 +376,13 @@ class FatigueAnalyzer(
 
         } catch (e: Exception) {
             Log.e(TAG, "Error processing frame", e)
+            consecutiveLowEarFrames = 0
+            consecutiveYawnFrames = 0
+            yawnActive = false
+            _result.value = AnalysisResult(fps = currentFps,
+                qualityStatus = FrameQuality.INFERENCE_ERROR,
+                calibrationState = calibrationState, warmupProgress = warmupProgress(),
+                baselineEar = baselineEar, computedEarThreshold = computedEarThreshold)
         }
     }
 
@@ -491,8 +402,7 @@ class FatigueAnalyzer(
             (warmupBuffer.size.toFloat() / WARMUP_TARGET).coerceIn(0f, 1f)
 
     fun close() {
-        interpreter?.close()
-        faceDetector.close()
+        landmarker.close()
         Log.i(TAG, "FatigueAnalyzer closed")
     }
 }

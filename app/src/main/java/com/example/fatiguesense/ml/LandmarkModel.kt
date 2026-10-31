@@ -1,19 +1,76 @@
 package com.example.fatiguesense.enterprise.ml
 
-import java.nio.ByteBuffer
-import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
-import kotlin.math.roundToInt
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
-/** Contract of coordinates32_android_fp32_float32.tflite (iBUG indices 36..67). */
+/** Shared geometry for the 32 eye/lip points selected from the MediaPipe mesh. */
 object LandmarkModel {
-    const val ASSET = "coordinates32_android_fp32_float32.tflite"
     const val SIZE = 192
     const val POINT_COUNT = 32
-    const val INPUT_BYTES = 3 * SIZE * SIZE * 4
 
     data class Point(val x: Float, val y: Float)
+    data class FaceBounds(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+        val area: Float get() = (right - left) * (bottom - top)
+    }
+    data class FaceGeometry(val bounds: FaceBounds, val points: List<Point>, val cropPoints: List<Point>)
+    data class HeadPose(val yaw: Float, val pitch: Float, val roll: Float)
+
+    /** Decode normalized full-frame coordinates before measuring on rectangular frames. */
+    fun mediaPipeGeometry(mesh: List<Point>, width: Int, height: Int): FaceGeometry {
+        require(width > 0 && height > 0 && mesh.size >= 468)
+        val pixels = mesh.take(468).map {
+            require(it.x.isFinite() && it.y.isFinite()) { "Non-finite MediaPipe mesh" }
+            Point(it.x * width, it.y * height)
+        }
+        val bounds = FaceBounds(pixels.minOf { it.x }, pixels.minOf { it.y },
+            pixels.maxOf { it.x }, pixels.maxOf { it.y })
+        val reference = crop(bounds.left, bounds.top, bounds.right, bounds.bottom)
+        val points = selectMediaPipePoints(pixels)
+        // This virtual square preserves the established geometry validity thresholds.
+        // MediaPipe performs its own detection/cropping directly on the full frame.
+        val cropPoints = points.map {
+            Point(((it.x - reference.centerX) / reference.side + .5f) * (SIZE - 1),
+                ((it.y - reference.centerY) / reference.side + .5f) * (SIZE - 1))
+        }
+        return FaceGeometry(bounds, points, cropPoints)
+    }
+
+    /** MediaPipe's column-major canonical-to-camera transform; R = Rz * Ry * Rx. */
+    fun mediaPipeHeadPose(matrix: FloatArray?): HeadPose {
+        val unavailable = HeadPose(Float.NaN, Float.NaN, Float.NaN)
+        if (matrix == null || matrix.size != 16 || matrix.any { !it.isFinite() }) return unavailable
+        val scales = (0..2).map { column ->
+            sqrt((0..2).sumOf { row -> matrix[column * 4 + row].toDouble().let { it * it } })
+        }
+        if (scales.any { it < 1e-6 }) return unavailable
+        fun r(row: Int, column: Int) = matrix[column * 4 + row] / scales[column]
+        fun degrees(radians: Double) = Math.toDegrees(radians).toFloat()
+        return HeadPose(
+            yaw = degrees(atan2(-r(2, 0), kotlin.math.hypot(r(0, 0), r(1, 0)))),
+            pitch = degrees(atan2(r(2, 1), r(2, 2))),
+            roll = degrees(atan2(r(1, 0), r(0, 0))),
+        )
+    }
+
+    // MediaPipe face mesh topology, ordered like iBUG points 36..67.
+    // https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/python/solutions/face_mesh_connections.py
+    private val meshIndices = intArrayOf(
+        33, 160, 158, 133, 153, 144, // right eye: corners and paired eyelids
+        362, 385, 387, 263, 373, 380, // left eye
+        61, 40, 37, 0, 267, 270, 291, 321, 314, 17, 84, 91, // outer lip
+        78, 81, 13, 311, 308, 402, 14, 178, // inner lip
+    )
+
+    fun selectMediaPipePoints(mesh: List<Point>): List<Point> {
+        require(mesh.size >= 468) { "Incomplete MediaPipe face mesh: ${mesh.size}" }
+        return meshIndices.map { mesh[it] }.also { selected ->
+            require(selected.all { it.x.isFinite() && it.y.isFinite() }) {
+                "Non-finite MediaPipe coordinates"
+            }
+        }
+    }
     enum class EyeSelection(val label: String) {
         NONE("EYES UNAVAILABLE"), BOTH("BOTH EYES"),
         RIGHT("RIGHT EYE (GEOMETRY)"), LEFT("LEFT EYE (GEOMETRY)")
@@ -51,49 +108,6 @@ object LandmarkModel {
             max(right - left, bottom - top) * 1.25f)
     }
 
-    /**
-     * Inverse-sample the notebook's affine crop at pixel centers 0..191.
-     * Bilinear RGB sampling uses black outside the image, never clips the crop.
-     * OpenCV INTER_LINEAR uses 1/32-pixel interpolation weights and uint8 output.
-     * Write planar R, G, B float32 / 255 (NCHW), not interleaved RGB.
-     */
-    fun writeInput(pixels: IntArray, width: Int, height: Int, crop: Crop, buffer: ByteBuffer) {
-        require(width > 0 && height > 0 && pixels.size >= width * height)
-        require(buffer.capacity() >= INPUT_BYTES)
-        val plane = SIZE * SIZE
-        fun pixel(x: Int, y: Int): Int =
-            if (x in 0 until width && y in 0 until height) pixels[y * width + x] else 0
-
-        buffer.clear()
-        for (y in 0 until SIZE) {
-            val sy = ((crop.centerY - crop.side / 2f + y * crop.side / (SIZE - 1)) * 32f).roundToInt() / 32f
-            val y0 = floor(sy).toInt()
-            val fy = sy - y0
-            for (x in 0 until SIZE) {
-                val sx = ((crop.centerX - crop.side / 2f + x * crop.side / (SIZE - 1)) * 32f).roundToInt() / 32f
-                val x0 = floor(sx).toInt()
-                val fx = sx - x0
-                val a = pixel(x0, y0)
-                val b = pixel(x0 + 1, y0)
-                val c = pixel(x0, y0 + 1)
-                val d = pixel(x0 + 1, y0 + 1)
-                for (channel in 0..2) {
-                    val shift = (2 - channel) * 8
-                    val top = ((a ushr shift) and 255) * (1f - fx) + ((b ushr shift) and 255) * fx
-                    val bottom = ((c ushr shift) and 255) * (1f - fx) + ((d ushr shift) and 255) * fx
-                    val value = (top * (1f - fy) + bottom * fy).roundToInt().coerceIn(0, 255) / 255f
-                    buffer.putFloat((channel * plane + y * SIZE + x) * 4, value)
-                }
-            }
-        }
-        buffer.rewind()
-    }
-
-    fun decode(output: Array<FloatArray>, crop: Crop): List<Point> {
-        require(output.size == POINT_COUNT && output.all { it.size == 2 && it.all(Float::isFinite) })
-        return output.map { crop.decode(it[0], it[1]) }
-    }
-
     private fun distance(a: Point, b: Point) = hypot(a.x - b.x, a.y - b.y)
 
     /** Six-point EAR: mean of two eyelid separations divided by corner width. */
@@ -104,7 +118,7 @@ object LandmarkModel {
                 distance(points[start + 2], points[start + 4])) / (2f * width)
     }
 
-    /** Python webcam MAR: three inner-lip separations / (3 * inner corner width). */
+    /** MAR: three inner-lip separations / (3 * inner corner width). */
     fun mouthAspectRatio(points: List<Point>): Float {
         val width = distance(points[24], points[28])
         return if (width < 1e-6f) 0f else
@@ -115,7 +129,7 @@ object LandmarkModel {
     fun inFrame(points: List<Point>, width: Int, height: Int): Boolean =
         points.all { it.x.isFinite() && it.y.isFinite() && it.x >= 0 && it.x < width && it.y >= 0 && it.y < height }
 
-    /** Same heuristic as Python assess_eye; this does not estimate visibility. */
+    /** Geometry heuristic; this does not estimate visibility. */
     fun assessEye(cropPoints: List<Point>, originalPoints: List<Point>, start: Int,
                   width: Int, height: Int): EyeMeasurement {
         val eye = cropPoints.subList(start, start + 6)

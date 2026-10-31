@@ -500,20 +500,11 @@ fun FaceSetupScreen() {
             SectionHeader(title = "0${sectionOffset + 3}. LANDMARK MAP (CONFIRMED)")
             Spacer(Modifier.height(6.dp))
             InfoRow(label = "ACTIVE MODEL", value = ModelProfile.label)
-            if (ModelProfile.legacy) {
-                InfoRow(label = "POINTS 0–3", value = "LEFT EYE (4 points)")
-                InfoRow(label = "POINTS 4–7", value = "RIGHT EYE (4 points)")
-                InfoRow(label = "POINTS 8–11", value = "MOUTH (4 points)")
-                InfoRow(label = "MODEL INPUT", value = "128 × 128 RGB float32 (NHWC)")
-                InfoRow(label = "MODEL OUTPUT", value = "24 values (12 pts × x,y)")
-            } else {
-                InfoRow(label = "POINTS 0–5",   value = "RIGHT EYE (6 points)")
-                InfoRow(label = "POINTS 6–11",  value = "LEFT EYE (6 points)")
-                InfoRow(label = "POINTS 12–23", value = "OUTER LIP (12 points)")
-                InfoRow(label = "POINTS 24–31", value = "INNER LIP (8 points)")
-                InfoRow(label = "MODEL INPUT",  value = "192 × 192  RGB float32 (NCHW)")
-                InfoRow(label = "MODEL OUTPUT", value = "64 values (32 pts × x,y)")
-            }
+            InfoRow(label = "POINTS 0–5", value = "RIGHT EYE (6 points)")
+            InfoRow(label = "POINTS 6–11", value = "LEFT EYE (6 points)")
+            InfoRow(label = "POINTS 12–23", value = "OUTER LIP (12 points)")
+            InfoRow(label = "POINTS 24–31", value = "INNER LIP (8 points)")
+            InfoRow(label = "MONITORING POINTS", value = "32 eye and mouth landmarks")
 
             Spacer(Modifier.height(16.dp))
 

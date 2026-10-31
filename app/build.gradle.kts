@@ -57,7 +57,7 @@ android {
     }
     
     androidResources {
-        noCompress("tflite")
+        noCompress("task")
     }
 }
 
@@ -90,10 +90,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     
     // ML & Video Streaming
-    implementation(libs.litert)
-    implementation(libs.litert.gpu)
-    implementation(libs.litert.gpu.api)
-    implementation(libs.mlkit.face)
+    implementation(libs.mediapipe.vision)
 
     // Room DB
     implementation(libs.room.runtime)

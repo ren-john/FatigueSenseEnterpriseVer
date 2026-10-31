@@ -2,7 +2,8 @@
 
 Independent Kotlin/Compose copy of FatigueSense. The original Android app is unchanged.
 Application ID: `com.fatiguesense.enterprise`. Label: `FatigueSenseEnterprise`.
-ML assets, calibration, streaming and local alarm behavior are retained. Camera frames
+Face detection, eye/mouth points, and head pose use the bundled MediaPipe Face
+Landmarker. Calibration, streaming and local alarms remain local. Camera frames
 stay local; cloud payloads contain detection records only.
 
 ## App features
@@ -16,6 +17,24 @@ stay local; cloud payloads contain detection records only.
 - Background batch upload with original timestamps, revision acknowledgments and retries.
 - Personal history, sync status, CSV sharing and safe clearing of uploaded local history.
 - Event-time flags: 3 EAR/60 seconds, 6 yawns/600 seconds, 180 seconds without a face.
+
+## Landmark detection
+
+MediaPipe handles full-frame face detection and replaces the custom trained point
+models. Its eye and lip landmarks feed
+the existing EAR/MAR, calibration, PERCLOS and alert pipeline. Complete a fresh
+Face Setup calibration after installing this version; settings from custom models
+are kept separate. See [model details and validation](MODEL_SWITCHING.md).
+
+## Phone EAR alarm
+
+The phone plays `asset/ndrrmc-alert-1.mp3` alongside the ESP32 buzzer when an EAR
+fatigue alert triggers. The bundled copy is `app/src/main/res/raw/ndrrmc_alert_1.mp3`.
+It loops for the active EAR alert and stops on recovery, stream loss/watchdog timeout,
+or monitoring shutdown. Yawn-only alerts do not trigger this sound. Playback uses
+the phone's alarm audio settings and requests temporary audio focus; it pauses
+when another audio source temporarily takes focus. Audio errors do not block
+ESP32 signaling or event logging.
 
 ## Driver and web integration
 
@@ -104,7 +123,7 @@ dependencies together in a separate change when needed.
 
 ## Validation
 
-Unit tests cover existing detector/model behavior plus event-time boundaries,
+Unit tests cover MediaPipe point mapping and detector geometry plus event-time boundaries,
 deduplication, driver/session isolation, no-face continuity, Wi-Fi input and CSV escaping.
 Room instrumentation tests cover queue isolation, exact-revision acknowledgment,
 safe clearing, crash recovery and persistent ESP identity. Run on a test device:

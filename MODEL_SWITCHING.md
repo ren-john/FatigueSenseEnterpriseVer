@@ -1,38 +1,64 @@
-# Switch FatigueSense models
+# MediaPipe face and landmark detection
 
-Use either prompt in Codex:
+Face detection and landmarks use Google's **MediaPipe Face Landmarker**, with
+`com.google.mediapipe:tasks-vision:1.0.0` and the bundled `face_landmarker.task`.
+There is no custom-model profile switch. Face Setup shows the active model.
 
-- Switch FatigueSense to the old 12-point model using MODEL_SWITCHING.md, then build and test it.
-- Switch FatigueSense to the new 32-point model using MODEL_SWITCHING.md, then build and test it.
+MediaPipe runs on the complete camera frame. Its bundled BlazeFace detector
+finds faces, then the face mesh model locates eye/lip points and produces facial
+transformation matrices for head pose. ML Kit and its face-detection dependency
+have been removed. Up to three faces are evaluated; the largest mesh bounding box
+selects the monitored face, with landmarks and pose taken from that same result.
+MediaPipe runs synchronously on CPU in IMAGE mode. Frames stay on the device;
+no runtime model download is required. A private bitmap copy prevents inference
+cleanup from recycling the preview frame.
 
-## Single switch
+`MediaPipeLandmarker.kt` runs inference; `LandmarkModel.kt` selects 32 eye/lip
+points from the face mesh and keeps the existing six-point EAR and inner-lip MAR
+formulas. Displayed points 0–5 are the right eye, 6–11 the left eye, 12–23 the outer
+lip, and 24–31 the inner lip. Normalized full-frame coordinates are converted to
+original image pixels before ratios are calculated, preserving aspect ratio on rectangular frames. A virtual
+square reference around the face keeps the established geometry validity limits.
 
-In `app/src/main/java/com/example/fatiguesense/ml/ModelProfile.kt`, change only `ACTIVE`:
+Head pose is derived from MediaPipe's column-major canonical-to-camera transform.
+Turned/clipped faces can continue monitoring qualified points, while baseline
+collection pauses. A missing/invalid pose also pauses calibration. Empty MediaPipe
+results are no-face observations for absence tracking; native errors instead reset
+alert streaks and publish an inference-error result without counting as absence.
 
-```kotlin
-val ACTIVE = Profile.LEGACY_12PT
-// or:
-val ACTIVE = Profile.COORDINATES_32PT
+## Calibration
+
+Baseline EAR, adaptive mode, and manual EAR/MAR settings use separate
+`*_mediapipe_v1` preference keys. Defaults are 0.22 EAR, 0.60 MAR, and adaptive
+mode enabled. Custom-model settings remain stored but are not reused. Complete
+Face Setup calibration and validate eye closure/yawn thresholds on the target
+camera before relying on alerts. Existing logs and the alert frame count are shared.
+
+## Model provenance
+
+- [Official Android integration guide](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker/android)
+- [Official model, float16 version 1](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task)
+- SHA-256: `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff`
+- [MediaPipe mesh topology](https://github.com/google-ai-edge/mediapipe/blob/master/mediapipe/python/solutions/face_mesh_connections.py)
+
+The retired custom `.tflite` assets are kept in `docs/legacy-models/` for reference
+and are not bundled in the APK. Their interpreter and GPU dependencies have been
+removed. Returning to a custom model requires an explicit implementation change.
+
+## Validation
+
+With JDK 17 or 21 and Android SDK 36:
+
+```bash
+bash ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:lintDebug :app:assembleDebugAndroidTest
 ```
 
-Rebuild and reinstall the APK, then restart the app. This is a build-time switch, not a live toggle. Both assets remain bundled. Face Setup shows the active model.
-
-| Profile | Old 12-point | New 32-point |
-|---|---|---|
-| Asset | landmark_model_float32(ver3).tflite | coordinates32_android_fp32_float32.tflite |
-| Input | 128x128 NHWC RGB /255 | 192x192 NCHW RGB /255 |
-| Output | [1,24] | [1,32,2] |
-| Crop | Original square crop, 10% downward offset, clipped and bitmap-resized | 1.25x centered affine crop with black padding |
-| EAR | Each eye: top-bottom distance / corner distance; average both eyes | Six-point EAR with geometry-based eye selection |
-| MAR | Mouth top-bottom distance / corner distance | Three inner-lip distances / (3 x inner width) |
-| Turned/clipped faces | Skip inference (15-degree / 2% margin gate) | Continue inference, pause baseline collection |
-
-The legacy implementation is in `LegacyLandmarkModel.kt`, recovered from commit c310954; the newer implementation remains in `LandmarkModel.kt`. The legacy gate resets alert streaks when rejecting a frame. Shared alert logic and connection/shutdown repairs remain current. Both profiles use four CPU threads; this does not restore the old GPU delegate.
-
-Each profile retains its own baseline preference. Manual EAR/MAR cutoffs and adaptive mode now have separate profile keys and initially use defaults (0.22 EAR, 0.60 MAR, adaptive enabled). Recalibrate for a fresh comparison and record the chosen cutoffs. Alert frame count remains shared. Existing event logs are shared and do not identify the model, so record the model and test time separately.
-
-## Validation after switching
-
-Run `gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline` (JAVA_HOME must point to Android Studio's jbr). With a connected Android device, run `gradlew.bat :app:connectedDebugAndroidTest` to verify both bundled tensor contracts and the existing 32-point reference output. Install the rebuilt debug APK and check Face Setup's ACTIVE MODEL before testing. Device inference, thresholds, and thermal behavior require an actual phone test.
-
-Do not replace entire analyzer/manager files with Git versions: that would discard unrelated fixes. The profile selects the model, preprocessing, formulas, calibration keys, and UI map together.
+Unit tests cover point mapping, full-frame coordinate conversion, EAR/MAR geometry,
+head-pose matrix conversion, invalid pose/calibration gates, invalid meshes, eye
+selection, and calibration-key isolation. With a connected
+test device, run `bash ./gradlew :app:connectedDebugAndroidTest` to check that the
+official model detects the retained real face fixture, produces boxes/pose and
+valid eye/mouth measurements, preserves input bitmaps, and forwards blank frames
+to absence tracking.
+Real ESP streaming, head turns, blinking/yawning, latency, and thermal behavior
+still need phone/camera validation.

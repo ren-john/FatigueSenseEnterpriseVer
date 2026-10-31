@@ -18,6 +18,7 @@ import com.example.fatiguesense.enterprise.enterprise.DetectionJournal
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
@@ -77,7 +78,7 @@ object FatigueManager {
     // SharedPreferences keys
     private const val PREFS_NAME          = "fatiguesense_prefs"
     // Each model keeps its own calibration and manual cutoffs.
-    private val PREF_BASELINE_EAR = if (ModelProfile.legacy) "adaptive_baseline_ear" else "adaptive_baseline_ear_coordinates32_v1"
+    private val PREF_BASELINE_EAR = ModelProfile.preferenceKey("adaptive_baseline_ear")
     private val PREF_ADAPTIVE_MODE = ModelProfile.preferenceKey("adaptive_mode_enabled")
     private val PREF_EAR_THRESHOLD = ModelProfile.preferenceKey("manual_ear_threshold")
     private val PREF_MAR_THRESHOLD = ModelProfile.preferenceKey("manual_mar_threshold")
@@ -90,6 +91,7 @@ object FatigueManager {
     // ── Owned pipeline components ──────────────────────────────────────────────
     private var streamer:  MjpegStreamer?  = null
     private var analyzer: FatigueAnalyzer? = null
+    private var phoneEarAlarm: PhoneEarAlarm? = null
     private var streamJob:   Job? = null
     private var watchdogJob: Job? = null
     private var retirement: Job? = null
@@ -304,11 +306,20 @@ object FatigueManager {
         }
         streamer  = s
         analyzer  = a
+        val phoneAlarm = PhoneEarAlarm(appCtx)
+        phoneEarAlarm = phoneAlarm
 
         // ESP traffic uses its local route; phone-hotspot mode uses unbound routing.
         EspNetwork.network = EspConnection.network
 
         streamJob = managerScope.launch {
+            // Phone audio follows the detector, independently of ESP command delivery.
+            launch(Dispatchers.Main.immediate) {
+                combine(a.result, _streamStatus) { result, status ->
+                    result.isFatigueAlert && status == StreamStatus.STREAMING
+                }.collect { phoneAlarm.setAlertActive(it) }
+            }
+
             // 1. MJPEG stream
             launch { s.startStream { EspConnection.streamUrl(appCtx, enterpriseSession) } }
 
@@ -488,6 +499,8 @@ object FatigueManager {
             }
         }
 
+        streamJob?.invokeOnCompletion { phoneAlarm.close() }
+
         // 5. Independent watchdog — fires even if the ML pipeline is stuck
         watchdogJob = managerScope.launch {
             while (isActive) {
@@ -510,6 +523,8 @@ object FatigueManager {
     }
 
     fun stop() {
+        phoneEarAlarm?.close()
+        phoneEarAlarm = null
         if (!_isMonitoring.value) {
             Log.w(TAG, "stop() called while not monitoring — ignored")
             return
@@ -526,8 +541,8 @@ object FatigueManager {
         streamJob   = null
         watchdogJob = null
 
-        // Cancellation cannot interrupt native Interpreter.run(). Join every
-        // pipeline child before releasing the interpreter and face detector.
+        // Cancellation cannot interrupt native MediaPipe inference. Join every
+        // pipeline child before releasing the MediaPipe task.
         retirement = managerScope.launch {
             stoppingWatchdog?.join()
             retirePipeline(stoppingJob) { stoppingAnalyzer?.close() }

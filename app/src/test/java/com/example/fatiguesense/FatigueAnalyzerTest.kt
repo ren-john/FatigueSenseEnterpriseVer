@@ -2,8 +2,6 @@ package com.example.fatiguesense.enterprise
 
 import com.example.fatiguesense.enterprise.ml.LandmarkModel
 import com.example.fatiguesense.enterprise.ml.LandmarkModel.Point
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -43,7 +41,7 @@ class FatigueAnalyzerTest {
         assertTrue(frontal.calibrate)
     }
 
-    @Test fun clippedFacesUsePaddedInferenceButDoNotCalibrate() {
+    @Test fun clippedFacesContinueMonitoringButDoNotCalibrate() {
         val policy = LandmarkModel.frameEligibility(-20f, 10f, 150f, 200f, 640, 480, 0f, 0f, 0f)
         assertTrue(policy.runLandmarks)
         assertTrue(policy.faceClipped)
@@ -104,57 +102,104 @@ class FatigueAnalyzerTest {
         assertEquals(Point(100f, 90f), crop.decode(1f, 1f))
     }
 
-    @Test fun inputUsesPlanarRgbAndZeroPaddingAtUnclippedCropEdges() {
-        val buffer = ByteBuffer.allocateDirect(LandmarkModel.INPUT_BYTES).order(ByteOrder.nativeOrder())
-        val pixels = IntArray(16 * 16) { 0xFF804020.toInt() }
-        LandmarkModel.writeInput(pixels, 16, 16, LandmarkModel.crop(0f, 0f, 16f, 16f), buffer)
-        val plane = 192 * 192
-        val center = 96 * 192 + 96
-        assertEquals(128f / 255, buffer.getFloat(center * 4), 1e-6f)
-        assertEquals(64f / 255, buffer.getFloat((plane + center) * 4), 1e-6f)
-        assertEquals(32f / 255, buffer.getFloat((2 * plane + center) * 4), 1e-6f)
-        assertEquals(0f, buffer.getFloat(0), 0f)
-        assertEquals(0f, buffer.getFloat((3 * plane - 1) * 4), 0f)
-        assertEquals(0, buffer.position())
+
+    @Test fun mediaPipeMeshMapsBothEyesAndInnerLipsInRatioOrder() {
+        val mesh = List(478) { Point(it / 478f, (478 - it) / 478f) }
+        val points = LandmarkModel.selectMediaPipePoints(mesh)
+        assertEquals(32, points.size)
+        assertEquals(mesh[33], points[0])
+        assertEquals(mesh[133], points[3])
+        assertEquals(mesh[362], points[6])
+        assertEquals(mesh[263], points[9])
+        assertEquals(mesh[61], points[12])
+        assertEquals(mesh[291], points[18])
+        val lips = listOf(78, 81, 13, 311, 308, 402, 14, 178).map { mesh[it] }
+        assertEquals(lips, points.subList(24, 32))
     }
 
-    @Test fun bilinearSamplingUsesPixelCentersRatherThanResizeEdges() {
-        val buffer = ByteBuffer.allocateDirect(LandmarkModel.INPUT_BYTES).order(ByteOrder.nativeOrder())
-        // First output pixel samples (0.5, 0.5), the mean of four source pixels.
-        LandmarkModel.writeInput(intArrayOf(0xFFFF0000.toInt(), 0, 0, 0), 2, 2,
-            LandmarkModel.Crop(1f, 1f, 1f), buffer)
-        assertEquals(64f / 255, buffer.getFloat(0), 1e-6f)
+    @Test fun mediaPipeRatiosUsePixelsFromSquareCropOnRectangularFrame() {
+        val mesh = MutableList(478) { Point(.5f, .5f) }
+        listOf(33, 160, 158, 133, 153, 144).zip(listOf(
+            Point(.2f, .4f), Point(.3f, .35f), Point(.5f, .35f),
+            Point(.6f, .4f), Point(.5f, .45f), Point(.3f, .45f),
+        )).forEach { (index, point) -> mesh[index] = point }
+        val points = LandmarkModel.selectMediaPipePoints(mesh)
+        val crop = LandmarkModel.Crop(320f, 240f, 200f)
+        val pixels = points.map { crop.decode(it.x, it.y) }
+        assertEquals(.25f, LandmarkModel.eyeAspectRatio(pixels, 0), 1e-6f)
+        assertEquals(Point(260f, 220f), pixels[0])
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun nonFiniteCoordinatesAreRejected() {
-        val output = Array(32) { floatArrayOf(0.5f, 0.5f) }
-        output[5][0] = Float.NaN
-        LandmarkModel.decode(output, LandmarkModel.Crop(10f, 10f, 20f))
+    fun incompleteMediaPipeMeshIsRejected() {
+        LandmarkModel.selectMediaPipePoints(List(100) { Point(.5f, .5f) })
     }
 
-    @Test fun affineSamplingMatchesOpenCvReferenceIncludingPartialPadding() {
-        val pixels = IntArray(7 * 9) { i ->
-            val x = i % 7
-            val y = i / 7
-            (255 shl 24) or (((x * 31 + y * 7) % 256) shl 16) or
-                (((x * 13 + y * 23) % 256) shl 8) or ((x * 3 + y * 41) % 256)
+    @Test(expected = IllegalArgumentException::class)
+    fun nonFiniteMediaPipePointsAreRejected() {
+        val mesh = MutableList(478) { Point(.5f, .5f) }
+        mesh[33] = Point(Float.NaN, .5f)
+        LandmarkModel.selectMediaPipePoints(mesh)
+    }
+
+    @Test fun mediaPipeSettingsDoNotReuseCustomModelCalibrationKeys() {
+        val key = com.example.fatiguesense.enterprise.ml.ModelProfile.preferenceKey("adaptive_baseline_ear")
+        assertEquals("adaptive_baseline_ear_mediapipe_v1", key)
+        assertNotEquals("adaptive_baseline_ear_coordinates32_v1", key)
+        assertNotEquals("adaptive_baseline_ear", key)
+    }
+
+    @Test fun fullFrameMediaPipeGeometryUsesOriginalPixelAspectRatio() {
+        val mesh = MutableList(478) { Point(.5f, .5f) }
+        mesh[10] = Point(.1f, .1f)
+        mesh[152] = Point(.9f, .9f)
+        listOf(33, 160, 158, 133, 153, 144).zip(listOf(
+            Point(.2f, .4f), Point(.3f, .35f), Point(.5f, .35f),
+            Point(.6f, .4f), Point(.5f, .45f), Point(.3f, .45f),
+        )).forEach { (index, point) -> mesh[index] = point }
+        val face = LandmarkModel.mediaPipeGeometry(mesh, 800, 400)
+        assertEquals(LandmarkModel.FaceBounds(80f, 40f, 720f, 360f), face.bounds)
+        assertEquals(Point(160f, 160f), face.points[0])
+        // 40-pixel eyelid gap / 320-pixel eye width = 0.125, not 0.25.
+        assertEquals(.125f, LandmarkModel.eyeAspectRatio(face.points, 0), 1e-6f)
+        assertEquals(.125f, LandmarkModel.eyeAspectRatio(face.cropPoints, 0), 1e-6f)
+    }
+
+    @Test fun mediaPipeBoundsPreserveOutOfFrameEdgesForCalibrationGate() {
+        val mesh = MutableList(478) { Point(.5f, .5f) }
+        mesh[10] = Point(-.1f, .1f)
+        mesh[152] = Point(.9f, 1.1f)
+        val face = LandmarkModel.mediaPipeGeometry(mesh, 640, 480)
+        assertEquals(-64f, face.bounds.left, 1e-6f)
+        assertEquals(528f, face.bounds.bottom, 1e-4f)
+        val policy = with(face.bounds) {
+            LandmarkModel.frameEligibility(left, top, right, bottom, 640, 480, 0f, 0f, 0f)
         }
-        val buffer = ByteBuffer.allocateDirect(LandmarkModel.INPUT_BYTES).order(ByteOrder.nativeOrder())
-        LandmarkModel.writeInput(pixels, 7, 9, LandmarkModel.crop(0f, 1f, 7f, 8f), buffer)
-        // Golden RGB samples from cv2.warpAffine using the notebook's crop_image.
-        val reference = arrayOf(
-            intArrayOf(0, 0, 0, 0, 1), intArrayOf(19, 10, 4, 14, 24),
-            intArrayOf(40, 30, 41, 47, 64), intArrayOf(80, 60, 106, 102, 126),
-            intArrayOf(95, 95, 139, 148, 194), intArrayOf(110, 120, 168, 183, 83),
-            intArrayOf(140, 150, 220, 233, 48), intArrayOf(165, 170, 75, 9, 27),
-            intArrayOf(191, 191, 0, 0, 0),
+        assertTrue(policy.faceClipped)
+        assertFalse(policy.calibrate)
+    }
+
+    @Test fun mediaPipeHeadPoseUsesColumnMajorRotationAndIgnoresScaleAndTranslation() {
+        // Rz(-25 degrees) * Ry(30 degrees) * Rx(20 degrees), uniformly scaled by 2.
+        val matrix = floatArrayOf(
+            1.5697711f, -.7319963f, -1f, 0f,
+            1.104238f, 1.5587575f, .5923963f, 0f,
+            .5625628f, -1.0170823f, 1.6275954f, 0f,
+            10f, 20f, -50f, 1f,
         )
-        reference.forEach { sample ->
-            for (channel in 0..2) {
-                val offset = (channel * 192 * 192 + sample[1] * 192 + sample[0]) * 4
-                assertEquals(sample[channel + 2] / 255f, buffer.getFloat(offset), 1f / 255f)
-            }
+        val pose = LandmarkModel.mediaPipeHeadPose(matrix)
+        assertEquals(30f, pose.yaw, 1e-3f)
+        assertEquals(20f, pose.pitch, 1e-3f)
+        assertEquals(-25f, pose.roll, 1e-3f)
+    }
+
+    @Test fun missingOrDegenerateMediaPipePosePausesCalibration() {
+        for (matrix in listOf(null, FloatArray(16), FloatArray(3), FloatArray(16) { Float.NaN })) {
+            val pose = LandmarkModel.mediaPipeHeadPose(matrix)
+            val policy = LandmarkModel.frameEligibility(100f, 80f, 300f, 300f,
+                640, 480, pose.yaw, pose.pitch, pose.roll)
+            assertTrue(policy.runLandmarks)
+            assertFalse(policy.calibrate)
         }
     }
 }

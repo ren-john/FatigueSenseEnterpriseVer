@@ -1,6 +1,5 @@
 package com.example.fatiguesense.enterprise.ui.screens
 
-import com.example.fatiguesense.enterprise.ml.ModelProfile
 
 import android.content.Intent
 import android.os.Build
@@ -151,8 +150,8 @@ fun DashboardScreen() {
                             val px = oX + pt.x * scaleX
                             val py = oY + pt.y * scaleY
                             val dotColor = when {
-                                idx < (if (ModelProfile.legacy) 4 else 6) -> Color(0xFF00E5FF)  // right eye → cyan
-                                idx < (if (ModelProfile.legacy) 8 else 12) -> Color(0xFF69FF47)  // left eye → green
+                                idx < 6 -> Color(0xFF00E5FF)  // right eye → cyan
+                                idx < 12 -> Color(0xFF69FF47)  // left eye → green
                                 else    -> Color(0xFFFFD600)  // mouth     → yellow
                             }
                             drawCircle(color = dotColor, radius = 3.5.dp.toPx(), center = Offset(px, py))
@@ -354,6 +353,7 @@ fun DashboardScreen() {
                 analysis.qualityStatus == com.example.fatiguesense.enterprise.ml.FrameQuality.INFERENCE_ERROR -> "Landmark inference error"
                 analysis.boundingBox == null -> "No face detected"
                 !analysis.earValid -> "Landmarks found; eyes unavailable"
+                !analysis.headYaw.isFinite() -> "Detected (pose unavailable)"
                 else -> "Detected (yaw %.0f°)".format(analysis.headYaw)
             })
             InfoRow(label = "MAR (MOUTH OPEN RATIO)", value = if (analysis.marValid) "%.2f".format(analysis.mar) else "--")
