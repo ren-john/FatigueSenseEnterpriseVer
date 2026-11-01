@@ -22,6 +22,12 @@ abstract class FatigueDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE fatigue_events ADD COLUMN triggerType TEXT NOT NULL DEFAULT 'EAR'")
             }
         }
+        // New Local-mode events never share storage with legacy enterprise-era logs.
+        @Volatile private var LOCAL: FatigueDatabase? = null
+        fun getLocalInstance(context: Context): FatigueDatabase = LOCAL ?: synchronized(this) {
+            LOCAL ?: Room.databaseBuilder(context.applicationContext, FatigueDatabase::class.java,
+                "local-mode.db").addMigrations(MIGRATION_1_2).build().also { LOCAL = it }
+        }
         @Volatile private var INSTANCE: FatigueDatabase? = null
 
         fun getInstance(context: Context): FatigueDatabase =

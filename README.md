@@ -8,15 +8,69 @@ stay local; cloud payloads contain detection records only.
 
 ## App features
 
-- Firebase email/password login/recovery, driver claims and server access/assignment gate.
-- Room database for paired ESP ID, verified IP, identity-bound events and pending uploads.
+- Local-first dashboard, calibration, monitoring and history without an account or internet.
+- Optional enterprise sign-in/recovery from Settings, with driver claims and server assignment checks.
+- Separate Local-mode history, preserved legacy history, and account-owned enterprise uploads.
 - Saved-IP check, mDNS/Android NSD discovery and manual IP fallback, checking ESP identity by default.
 - Native Wi-Fi provisioning, save/restart status, AP/STA switching, forget/recovery controls.
 - Dynamic stream/control address and automatic identity verification on reconnection.
 - Durable eye/yawn trigger edges and continuous three-minute no-face observation.
 - Background batch upload with original timestamps, revision acknowledgments and retries.
-- Personal history, sync status, CSV sharing and safe clearing of uploaded local history.
+- Offline Local history/export/clearing; enterprise account history, sync status and pending-upload protection.
 - Event-time flags: 3 EAR/60 seconds, 6 yawns/600 seconds, 180 seconds without a face.
+
+## Local mode and ESP setup
+
+Fresh installs and upgrades without a new explicit enterprise preference open in
+Local mode, even if the phone has an older Firebase login. Calibration, Logs and
+Settings are available immediately. Local monitoring needs local Wi-Fi to an ESP;
+it does not need internet or an account. Local events stay in `local-mode.db` and
+never enter the enterprise upload queue after later sign-in. Earlier general logs
+remain separately available under **Logs → View preserved legacy history**, with
+unknown ownership; clearing Local history preserves that archive.
+
+For first setup:
+
+1. Open **Connect ESP** on the dashboard or **Settings → Connect / manage ESP**.
+2. In **Camera setup**, tap **Open Wi-Fi settings** and join `FatigueSense_Cam`.
+   The default Wi-Fi password is `safedriving`. Choose **Stay connected** if Android warns that it has no internet.
+3. Return to the app. Leave **Camera IP address** at `192.168.4.1` and tap
+   **Connect camera**. The default setup password is already filled in under
+   **Connection options**; change it there only if needed.
+4. When **Camera is ready** appears, tap **Continue to dashboard** and start monitoring.
+   Stop monitoring before changing the paired device.
+
+**Use your phone’s hotspot** is optional. Expand that section, enter your phone’s
+2.4 GHz hotspot name/password, and tap **Save and restart camera**. Turn on the
+phone hotspot after saving, wait for the camera to join, then select
+**Reconnect saved camera** or enter its new IP address. A save acknowledgement
+confirms settings were received; the camera must still reconnect and be verified.
+If a save result is unclear, check camera status in **Connection options** before
+retrying. On subsequent use, enable the same hotspot and reconnect the saved camera.
+
+**Troubleshooting & device settings** contains recovery instructions and controls
+for switching to direct camera Wi-Fi, removing the camera’s saved hotspot, or
+pairing a different camera. These changes explain their effects before applying.
+For recovery, wait about 30 seconds, join `FatigueSense_Cam`, and connect at
+`192.168.4.1`. Nonsecret fields and expanded sections survive Android Settings
+visits/rotation. Passwords are kept in memory; hotspot passwords are not put into
+pairing/history storage.
+
+Manual IP is the baseline. Automatic discovery only works with firmware advertising
+`_fatiguesense._tcp`; the inspected firmware does not advertise it. A known device ID
+must match on reconnect. Older firmware without `device_id` requires explicit camera
+confirmation and is labeled as having unverified hardware identity. Reset Local
+pairing to select different hardware. Enterprise mode additionally requires the
+administrator-assigned ID, including exact manual ID entry for older firmware.
+
+Use **Settings → Enterprise sign-in** to opt in to enterprise features. Successful
+access validation remembers Enterprise mode across restarts. Cancelled/failed entry
+returns to Local mode; failed restoration offers retry and **Return to Local mode**.
+**Settings → Sign out and return to Local mode** stops monitoring and durably queues
+enterprise closure before Local activates. Pending enterprise records retain their
+original account/organization/session. Temporary internet loss during enterprise
+monitoring keeps that ownership. Local activation waits for in-flight cloud requests
+and monitoring cleanup to settle; a cleanup error offers retry.
 
 ## Landmark detection
 
@@ -62,10 +116,10 @@ Offline closure remains queued. Authentication, session exclusivity, historical
 event uploads, and detection/calibration behavior are retained.
 
 After an Admin or Supervisor replaces hardware in web **Vehicles → Edit**, open
-**Device / account → Refresh assignments**, reset the old local pairing, then
+**Settings → Connect / manage ESP → Refresh assignments**, reset the old local pairing, then
 verify the replacement IP and setup password. Settings displays the assigned ID.
 
-For firmware without `device_id`, enable **Temporary: manually confirm ID**, enter
+For firmware without `device_id`, enable the manual assigned-ID confirmation, enter
 the administrator-assigned ID exactly (case-sensitive), then verify the IP.
 This confirms your input, not the camera's physical identity. Camera/network and
 backend assignment checks still apply. Confirmation survives reconnects in memory
@@ -76,8 +130,8 @@ Rebuild/restart the sibling backend and apply its updated Firestore rules before
 using hardware replacement. Install the rebuilt Android APK. No live Firebase
 deployment is performed by these source changes.
 
-With a placeholder backend URL, the APK opens to a login screen explaining incomplete configuration.
-No mock account or authentication bypass is provided.
+With a placeholder backend URL, Local mode remains usable. Enterprise sign-in explains
+that backend configuration is incomplete.
 
 ## Build and configuration
 
@@ -110,7 +164,8 @@ The server root and `/api` base are accepted and normalized. A physical phone
 needs the development computer's reachable LAN address and port, not localhost.
 Local ESP HTTP is retained. Never include Admin SDK keys.
 
-Firebase Auth uses the default Firebase app initialized from generated resources.
+Firebase Auth uses the default Firebase app initialized from generated resources only
+after explicit enterprise entry/restoration. Local startup does not initialize Firebase.
 The Kotlin namespace remains `com.example.fatiguesense.enterprise`; the installed
 application ID matches the Firebase registration. This installs separately from
 the earlier `com.example.fatiguesense.enterprise` prototype and does not migrate
@@ -132,6 +187,9 @@ safe clearing, crash recovery and persistent ESP identity. Run on a test device:
 .\gradlew.bat connectedDebugAndroidTest
 ```
 
-Real ESP streaming, NSD while hosting a phone hotspot, camera/alarm hardware and real
-Firebase/backend flow need integration testing. See [implementation status](docs/implementation-status.md).
+The Local-mode sprint evidence, emulator/fixture commands, and remaining physical
+phone/ESP and enterprise test-environment checks are in
+[Local/Enterprise validation](docs/local-mode-validation.md). Current sprint tracking
+is in [the sprint plan](docs/local-enterprise-sprints.md); older enterprise integration
+results remain in [implementation status](docs/implementation-status.md).
 Original source hashes are recorded in `docs/source-baseline.json`.

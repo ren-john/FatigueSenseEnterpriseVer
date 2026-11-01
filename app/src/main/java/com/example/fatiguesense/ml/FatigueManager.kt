@@ -12,9 +12,12 @@ import android.net.NetworkRequest
 import android.util.Log
 import com.example.fatiguesense.enterprise.db.FatigueDatabase
 import com.example.fatiguesense.enterprise.db.FatigueEventEntity
-import com.example.fatiguesense.enterprise.enterprise.EnterpriseAuth
 import com.example.fatiguesense.enterprise.enterprise.EspConnection
 import com.example.fatiguesense.enterprise.enterprise.DetectionJournal
+import com.example.fatiguesense.enterprise.enterprise.MonitoringCleanup
+import com.example.fatiguesense.enterprise.enterprise.MonitoringContext
+import com.example.fatiguesense.enterprise.enterprise.AppModes
+import com.example.fatiguesense.enterprise.enterprise.requireMode
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -94,9 +97,11 @@ object FatigueManager {
     private var phoneEarAlarm: PhoneEarAlarm? = null
     private var streamJob:   Job? = null
     private var watchdogJob: Job? = null
-    private var retirement: Job? = null
+    private var retirement: Deferred<Unit>? = null
+    private var monitoringContext: MonitoringContext? = null
+    private val pendingRetirement = MonitoringCleanup()
 
-    suspend fun awaitStopped() { retirement?.join() }
+    suspend fun awaitStopped() { retirement?.join(); pendingRetirement.drain() }
 
     // ── SharedPreferences & Room DB ───────────────────────────────────────────
     private var prefs: SharedPreferences? = null
@@ -184,7 +189,7 @@ object FatigueManager {
             }
         }
         if (db == null) {
-            val database = FatigueDatabase.getInstance(appCtx)
+            val database = FatigueDatabase.getLocalInstance(appCtx)
             db = database
             dbJob?.cancel()
             dbJob = managerScope.launch {
@@ -275,19 +280,26 @@ object FatigueManager {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    fun start(context: Context) {
+    fun start(context: Context, run: MonitoringContext) {
         check(retirement?.isCompleted != false) { "Previous monitoring pipeline is still stopping." }
-        val enterpriseSession = EnterpriseAuth.session.value ?: return
-        if (EspConnection.verifiedId.value != enterpriseSession.assignment.deviceId) return
+        run.requireMode(AppModes.policy.mode.value, AppModes.policy.enterpriseOwner())
+        val enterpriseSession = (run as? MonitoringContext.Enterprise)?.session
+        val expectedId = when (run) {
+            is MonitoringContext.Local -> run.deviceId
+            is MonitoringContext.Enterprise -> run.session.assignment.deviceId
+        }
+        check(EspConnection.verifiedId.value == expectedId) { "Verify the monitoring device first." }
         if (_isMonitoring.value) {
             Log.w(TAG, "start() called while already monitoring — ignored")
             return
         }
+        check(monitoringContext == null) { "Previous monitoring cleanup is pending." }
+        monitoringContext = run
         _isMonitoring.value = true
         Log.i(TAG, "Starting monitoring pipeline")
 
         init(context)
-        DetectionJournal.start(enterpriseSession)
+        if (enterpriseSession != null) DetectionJournal.start(enterpriseSession)
         Esp32AlertSender.startSession(context)
         val appCtx = context.applicationContext
 
@@ -321,7 +333,11 @@ object FatigueManager {
             }
 
             // 1. MJPEG stream
-            launch { s.startStream { EspConnection.streamUrl(appCtx, enterpriseSession) } }
+            launch { s.startStream {
+                run.requireMode(AppModes.policy.mode.value, AppModes.policy.enterpriseOwner())
+                if (enterpriseSession != null) EspConnection.streamUrl(appCtx, enterpriseSession)
+                else EspConnection.localStreamUrl(appCtx, expectedId)
+            } }
 
             // 2. Pipe frames into analyzer (non-blocking for full-speed display)
             val isProcessing = AtomicBoolean(false)
@@ -332,8 +348,10 @@ object FatigueManager {
                         launch(Dispatchers.Default) {
                             try {
                                 a.processFrame(bmp)
-                                a.lastObservation?.let { DetectionJournal.frame(enterpriseSession.sessionId, it) }
-                                    ?: DetectionJournal.gap(enterpriseSession.sessionId)
+                                if (enterpriseSession != null) {
+                                    a.lastObservation?.let { DetectionJournal.frame(enterpriseSession.sessionId, it) }
+                                        ?: DetectionJournal.gap(enterpriseSession.sessionId)
+                                }
                             } finally {
                                 isProcessing.set(false)
                             }
@@ -346,7 +364,10 @@ object FatigueManager {
             launch { s.streamStatus.collect {
                 if (!_isMonitoring.value) return@collect
                 _streamStatus.value = it
-                if (it == StreamStatus.LOST) { EspConnection.blockCommands(); DetectionJournal.gap(enterpriseSession.sessionId) }
+                if (it == StreamStatus.LOST) {
+                    EspConnection.blockCommands()
+                    if (enterpriseSession != null) DetectionJournal.gap(enterpriseSession.sessionId)
+                } else if (it == StreamStatus.STREAMING) Esp32AlertSender.onNetworkAvailable()
             } }
             launch { s.streamFps.collect { _streamFps.value = it } }
 
@@ -366,8 +387,7 @@ object FatigueManager {
                     val isAlertNow = result.isFatigueAlert
                     val now = System.currentTimeMillis()
 
-                    managerScope.launch {
-                      alertMutex.withLock {
+                    alertMutex.withLock {
                     if (isAlertNow && !wasAlertActive) {
                         // Rising edge — alert just started
                         alertStartMs   = now
@@ -387,8 +407,10 @@ object FatigueManager {
                             severity    = FatigueEventSeverity.FATIGUE_ALERT,
                             triggerType = AlertTriggerType.EAR,
                         )
-                        persistAndEmitEvent(event)
-                        wasAlertActive = false
+                        withContext(NonCancellable) {
+                            persistAndEmitEvent(event, run)
+                            wasAlertActive = false
+                        }
                         Log.i(TAG, "Fatigue event logged: duration=${durationMs}ms ear=${alertStartEar}")
                         // Hardware clear is emitted only after the active-state hold.
                     }
@@ -412,7 +434,7 @@ object FatigueManager {
                             launch { Esp32AlertSender.onYawnAlert().await() }
                         }
                     } else if (!result.isYawnAlert) {
-                        if (wasYawnActive) {
+                        if (wasYawnActive) withContext(NonCancellable) {
                             persistAndEmitEvent(
                                 FatigueEvent(
                                     timestampMs = yawnStartMs,
@@ -420,10 +442,10 @@ object FatigueManager {
                                     earValue = yawnStartEar,
                                     severity = FatigueEventSeverity.WARNING,
                                     triggerType = AlertTriggerType.MAR,
-                                )
+                                ), run
                             )
+                            wasYawnActive = false
                         }
-                        wasYawnActive = false
                     }
                     val marFatigueGroup = result.yawnsInWindow / 3
                     if (result.isYawnFatigueTriggered &&
@@ -493,7 +515,6 @@ object FatigueManager {
                             marRecoveryCandidateAt = 0L
                         }
                     }
-                      }
                     }
                 }
             }
@@ -512,7 +533,9 @@ object FatigueManager {
                 ) {
                     Log.w(TAG, "Watchdog: no frame for ${WATCHDOG_GAP_MS}ms — marking LOST")
                     _streamStatus.value = StreamStatus.LOST
-                    DetectionJournal.gap(enterpriseSession.sessionId)
+                    EspConnection.blockCommands()
+                    s.reconnect()
+                    if (enterpriseSession != null) DetectionJournal.gap(enterpriseSession.sessionId)
                 } else if (lastFrame > 0 &&
                     SystemClock.elapsedRealtime() - lastFrame <= WATCHDOG_GAP_MS &&
                     s.streamStatus.value == StreamStatus.STREAMING) {
@@ -541,62 +564,54 @@ object FatigueManager {
         streamJob   = null
         watchdogJob = null
 
-        // Cancellation cannot interrupt native MediaPipe inference. Join every
-        // pipeline child before releasing the MediaPipe task.
-        retirement = managerScope.launch {
-            stoppingWatchdog?.join()
-            retirePipeline(stoppingJob) { stoppingAnalyzer?.close() }
-            Log.i(TAG, "Monitoring resources released after inference completed")
-        }
-        streamer = null
-        analyzer = null
-
-        _frames.value         = null
-        _analysisResult.value = AnalysisResult()
-        _streamStatus.value   = StreamStatus.LOST
-        _sessionAlertCount.value = 0
-        _sessionYawnCount.value = 0
-        wasYawnFatigueTriggered = false
-        lastMarFatigueGroupSent = 0
-        _activeAlertState.value = ActiveAlertState.NONE
+        val run = checkNotNull(monitoringContext)
+        val endedAt = System.currentTimeMillis()
         Esp32AlertSender.stopSession()
-        Esp32AlertSender.sendForcedClear()
-
-        if (wasYawnActive) {
-            val now = System.currentTimeMillis()
-            val event = FatigueEvent(
-                timestampMs = yawnStartMs,
-                durationMs = (now - yawnStartMs).coerceAtLeast(0L),
-                earValue = yawnStartEar,
-                severity = FatigueEventSeverity.WARNING,
-                triggerType = AlertTriggerType.MAR,
-            )
-            managerScope.launch { persistAndEmitEvent(event) }
-            wasYawnActive = false
-        }
-
-        // If an alert was still active when monitoring stopped, close it out
-        if (wasAlertActive) {
-            val now = System.currentTimeMillis()
-            val event = FatigueEvent(
-                timestampMs = alertStartMs,
-                durationMs  = now - alertStartMs,
-                earValue    = alertStartEar,
-                severity    = FatigueEventSeverity.FATIGUE_ALERT,
-                triggerType = AlertTriggerType.EAR,
-            )
-            managerScope.launch { persistAndEmitEvent(event) }
-            wasAlertActive = false
-        }
-
-        unbindWifiNetwork()
+        val hardwareClear = Esp32AlertSender.sendForcedClear()
+        // Native inference and every alert/event child must settle before switching owners.
+        var released = false
+        retirement = managerScope.async { pendingRetirement.enqueue {
+            if (!released) {
+                stoppingWatchdog?.join()
+                retirePipeline(stoppingJob) { stoppingAnalyzer?.close() }
+                released = true
+            }
+            hardwareClear.await()
+            alertMutex.withLock {
+                if (wasYawnActive) persistAndEmitEvent(FatigueEvent(yawnStartMs,
+                    (endedAt - yawnStartMs).coerceAtLeast(0), yawnStartEar,
+                    FatigueEventSeverity.WARNING, AlertTriggerType.MAR), run).also { wasYawnActive = false }
+                if (wasAlertActive) persistAndEmitEvent(FatigueEvent(alertStartMs,
+                    (endedAt - alertStartMs).coerceAtLeast(0), alertStartEar,
+                    FatigueEventSeverity.FATIGUE_ALERT, AlertTriggerType.EAR), run).also { wasAlertActive = false }
+                wasYawnActive = false; wasAlertActive = false
+                wasYawnFatigueTriggered = false; lastMarFatigueGroupSent = 0
+                marRecoveryCandidateAt = 0; stateAbsentSince = 0
+            }
+            _frames.value = null
+            _analysisResult.value = AnalysisResult()
+            _sessionAlertCount.value = 0; _sessionYawnCount.value = 0
+            _activeAlertState.value = ActiveAlertState.NONE
+            unbindWifiNetwork()
+            monitoringContext = null
+            Log.i(TAG, "Monitoring resources and final events released")
+        } }
+        streamer = null; analyzer = null
+        _frames.value = null
+        _analysisResult.value = AnalysisResult()
+        _streamStatus.value = StreamStatus.LOST
+        _sessionAlertCount.value = 0; _sessionYawnCount.value = 0
+        _activeAlertState.value = ActiveAlertState.NONE
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    private suspend fun persistAndEmitEvent(event: FatigueEvent) {
+    private suspend fun persistAndEmitEvent(event: FatigueEvent, run: MonitoringContext) {
+        // Enterprise frames are journaled separately with immutable session ownership.
+        // Never duplicate enterprise events into Local or legacy general history.
+        if (run !is MonitoringContext.Local) return
         // Write to Room DB
-        db?.fatigueEventDao()?.insert(
+        checkNotNull(db).fatigueEventDao().insert(
             FatigueEventEntity(
                 timestampMs = event.timestampMs,
                 durationMs  = event.durationMs,
@@ -616,7 +631,7 @@ object FatigueManager {
 
 // ── Extension: FatigueEventEntity → FatigueEvent ─────────────────────────────
 
-private fun FatigueEventEntity.toFatigueEvent() = FatigueEvent(
+internal fun FatigueEventEntity.toFatigueEvent() = FatigueEvent(
     timestampMs = timestampMs,
     durationMs  = durationMs,
     earValue    = earValue,

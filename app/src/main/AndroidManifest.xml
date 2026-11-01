@@ -18,6 +18,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".FatigueSenseApplication"
         android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -27,6 +28,12 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.FatigueSense">
+
+        <!-- Auth is created only for explicit enterprise entry/restoration. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
 
         <activity
             android:name=".MainActivity"

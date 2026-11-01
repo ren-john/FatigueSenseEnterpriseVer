@@ -19,6 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.fatiguesense.enterprise.ml.FatigueEventSeverity
 import com.example.fatiguesense.enterprise.ml.FatigueManager
+import com.example.fatiguesense.enterprise.ml.toFatigueEvent
+import com.example.fatiguesense.enterprise.db.FatigueDatabase
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.fatiguesense.enterprise.ui.components.*
 import com.example.fatiguesense.enterprise.ui.theme.*
 import java.util.Calendar
@@ -52,7 +55,11 @@ fun LogsScreen() {
     var showSortMenu       by remember { mutableStateOf(false) }
 
     // ── Live data from FatigueManager ────────────────────────────────────────
-    val allEvents by FatigueManager.logEvents.collectAsState()
+    var showLegacy by rememberSaveable { mutableStateOf(false) }
+    val localEvents by FatigueManager.logEvents.collectAsState()
+    val legacyRows by remember { FatigueDatabase.getInstance(context).fatigueEventDao().observeAll() }
+        .collectAsState(initial = emptyList())
+    val allEvents = if (showLegacy) legacyRows.map { it.toFatigueEvent() } else localEvents
 
     // ── Apply tab + severity filter + sort order ─────────────────────────────
     val displayedEvents = remember(allEvents, selectedTab, severityFilterOn, sortOrder) {
@@ -119,6 +126,11 @@ fun LogsScreen() {
                     .padding(innerPadding)
                     .verticalScroll(rememberScrollState()),
             ) {
+                Text(if (showLegacy) "Legacy history · ownership unknown; kept separate from Local mode and uploads."
+                    else "Local history · stored only on this phone; never uploaded.", modifier = Modifier.padding(16.dp))
+                TextButton(onClick = { showLegacy = !showLegacy }) {
+                    Text(if (showLegacy) "Show Local-mode history" else "View preserved legacy history")
+                }
                 // ── Page Header ──────────────────────────────────────────────────
                 Row(
                     modifier = Modifier
@@ -128,7 +140,7 @@ fun LogsScreen() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "DETECTION LOG",
+                            text = if (showLegacy) "LEGACY HISTORY" else "LOCAL DETECTION LOG",
                             style = MaterialTheme.typography.headlineSmall.copy(
                                 color = FatigueOnSurface,
                                 fontWeight = FontWeight.ExtraBold,

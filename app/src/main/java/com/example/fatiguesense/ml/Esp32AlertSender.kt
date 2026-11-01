@@ -29,10 +29,12 @@ object Esp32AlertSender {
     private var context: Context? = null
     @Volatile private var currentAlertType: String? = null
     @Volatile private var generation = 0L
+    @Volatile private var sessionActive = false
 
     @Synchronized
     fun startSession(context: Context) {
         generation++
+        sessionActive = true
         this.context = context.applicationContext
         val prefs = this.context!!.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         sessionId = (prefs.getInt(SESSION, 0) + 1) and 0xffff
@@ -54,6 +56,7 @@ object Esp32AlertSender {
 
     @Synchronized fun stopSession() {
         generation++
+        sessionActive = false
         heartbeatJob?.cancel()
         heartbeatJob = null
         currentAlertType = null
@@ -76,7 +79,7 @@ object Esp32AlertSender {
         val targetHost = com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value
         val commandGeneration = generation
         return scope.async {
-            if (commandGeneration != generation || targetHost != com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value) return@async false
+            if ((type != "clear" && !sessionActive) || commandGeneration != generation || targetHost != com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value) return@async false
             if (type == "yawn" || type == "fatigue") currentAlertType = type
             if (type == "clear") currentAlertType = null
             Log.i(TAG, "Dispatching alert type=$type forced=$forced")
@@ -85,7 +88,7 @@ object Esp32AlertSender {
     }
 
     private suspend fun send(type: String, forced: Boolean, network: Network?, targetHost: String, commandGeneration: Long): Boolean = mutex.withLock {
-        if (commandGeneration != generation) return@withLock false
+        if (commandGeneration != generation || (type != "clear" && !sessionActive)) return@withLock false
         if (!isEnabled) return@withLock true
         val seq = synchronized(this) {
             counter = (counter + 1) and 0xffff
@@ -96,7 +99,7 @@ object Esp32AlertSender {
         val suffix = "&seq=$seq" + if (forced) "&forced=1" else ""
         repeat(ATTEMPTS) { attempt ->
             val path = "/alert?type=$type$suffix&outputs=buzzer"
-            if (commandGeneration != generation || targetHost != com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value) return@withLock false
+            if ((type != "clear" && !sessionActive) || commandGeneration != generation || targetHost != com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value) return@withLock false
             if (request(path, network, targetHost)) {
                 Log.i(TAG, "Alert acknowledged: type=$type seq=$seq attempt=${attempt + 1}")
                 return@withLock true
@@ -115,6 +118,8 @@ object Esp32AlertSender {
             val url = URL("http://$targetHost$path")
             connection = ((network?.openConnection(url) ?: url.openConnection()) as HttpURLConnection).apply {
                 instanceFollowRedirects = false
+                setRequestProperty("Connection", "close")
+                useCaches = false
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 requestMethod = "GET"

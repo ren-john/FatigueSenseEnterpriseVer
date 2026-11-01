@@ -3,7 +3,7 @@ package com.example.fatiguesense.enterprise
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.firebase.FirebaseApp
-import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.FirebaseOptions
 
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,14 +25,13 @@ class ExampleInstrumentedTest {
     }
 
     @Test
-    fun firebaseUsesGeneratedAndroidConfiguration() {
+    fun firebaseConfigurationIsReadableWithoutInitializingCloudSdk() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val app = checkNotNull(FirebaseApp.initializeApp(context))
+        val options = checkNotNull(FirebaseOptions.fromResource(context))
 
-        assertEquals(FirebaseApp.DEFAULT_APP_NAME, app.name)
-        assertEquals(context.getString(R.string.google_app_id), app.options.applicationId)
-        assertEquals(context.getString(R.string.project_id), app.options.projectId)
-        assertEquals(context.getString(R.string.google_api_key), app.options.apiKey)
-        assertSame(app, FirebaseAuth.getInstance().app)
+        assertEquals(context.getString(R.string.google_app_id), options.applicationId)
+        assertEquals(context.getString(R.string.project_id), options.projectId)
+        assertEquals(context.getString(R.string.google_api_key), options.apiKey)
+        assertTrue(FirebaseApp.getApps(context).isEmpty())
     }
 }

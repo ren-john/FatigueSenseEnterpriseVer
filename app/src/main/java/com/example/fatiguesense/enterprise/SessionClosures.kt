@@ -11,7 +11,7 @@ object SessionClosures {
         pending = { dao.pendingClosures(driver.uid, driver.orgId) },
         close = { ended ->
             val result = EnterpriseAuth.call("mobileEndSession", JSONObject()
-                .put("sessionId", ended.sessionId).put("endedAt", ended.endedAt), driver.uid)
+                .put("sessionId", ended.sessionId).put("endedAt", ended.endedAt), driver)
             check(result.optBoolean("success")) { "Session closure not acknowledged. Retry before starting monitoring." }
         },
         acknowledge = { dao.acknowledgeSession(it.sessionId) },

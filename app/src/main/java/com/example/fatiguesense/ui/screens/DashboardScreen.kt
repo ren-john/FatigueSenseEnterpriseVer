@@ -39,11 +39,17 @@ import com.example.fatiguesense.enterprise.ml.CalibrationState
 import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.ml.StreamStatus
 import com.example.fatiguesense.enterprise.services.FatigueService
+import com.example.fatiguesense.enterprise.enterprise.*
 import com.example.fatiguesense.enterprise.ui.components.*
 import com.example.fatiguesense.enterprise.ui.theme.*
 
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(onConnectEsp: () -> Unit = {}) {
+    val mode by AppModes.policy.mode.collectAsState()
+    val localReady by EspConnection.localReady.collectAsState()
+    val configured by EspConnection.configuredAssignment.collectAsState()
+    val verified by EspConnection.verifiedId.collectAsState()
+    val ready = if (mode == AppMode.LOCAL) localReady else configured != null && verified == configured?.deviceId
     val context           = LocalContext.current
     val frame             by FatigueManager.frames.collectAsState()
     val analysis          by FatigueManager.analysisResult.collectAsState()
@@ -71,6 +77,9 @@ fun DashboardScreen() {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
+            Text(if (mode == AppMode.LOCAL) "Local mode · events stay on this phone" else "Enterprise mode · account-scoped monitoring", modifier = Modifier.padding(bottom = 12.dp))
+            val journalError by DetectionJournal.error.collectAsState()
+            if (mode == AppMode.ENTERPRISE && journalError != null) Text(journalError!!, color = MaterialTheme.colorScheme.error)
             val enterpriseMessage by FatigueService.message.collectAsState()
             if (enterpriseMessage.isNotBlank()) Text(enterpriseMessage, modifier = Modifier.padding(bottom = 12.dp))
 
@@ -384,6 +393,8 @@ fun DashboardScreen() {
                         context.stopService(Intent(context, FatigueService::class.java))
                     },
                 )
+            } else if (!ready) {
+                ActionButton(text = "CONNECT ESP", onClick = onConnectEsp, icon = Icons.Filled.Wifi)
             } else {
                 ActionButton(
                     text    = "START MONITORING",

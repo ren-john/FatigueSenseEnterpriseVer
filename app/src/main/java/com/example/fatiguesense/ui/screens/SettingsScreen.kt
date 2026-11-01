@@ -22,7 +22,12 @@ import androidx.compose.ui.unit.sp
 import com.example.fatiguesense.enterprise.ml.Esp32AlertSender
 import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.ml.StreamStatus
-import com.example.fatiguesense.enterprise.enterprise.EnterpriseAuth
+import com.example.fatiguesense.enterprise.enterprise.*
+import com.example.fatiguesense.enterprise.db.FatigueDatabase
+import com.example.fatiguesense.enterprise.ml.toFatigueEvent
+import com.example.fatiguesense.enterprise.services.FatigueService
+import com.example.fatiguesense.enterprise.utils.LogExportUtils
+import com.example.fatiguesense.enterprise.utils.ExportResult
 import com.example.fatiguesense.enterprise.ui.components.*
 import com.example.fatiguesense.enterprise.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +41,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onConnectEsp: () -> Unit = {}) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -45,6 +50,11 @@ fun SettingsScreen() {
 
     val streamStatus by FatigueManager.streamStatus.collectAsState()
     val assignment by EnterpriseAuth.selection.collectAsState()
+    val mode by AppModes.policy.mode.collectAsState()
+    val local = mode == AppMode.LOCAL
+    val deviceId by EspConnection.verifiedId.collectAsState()
+    var busy by remember { mutableStateOf(false) }
+    var actionError by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -89,7 +99,7 @@ fun SettingsScreen() {
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "DEVICE ID: ${assignment?.deviceId ?: "Not assigned"} // STATUS: ${when (streamStatus) {
+                            text = "DEVICE ID: ${if (local) deviceId?.takeUnless { it == "manual-local" } ?: "Unverified local camera" else assignment?.deviceId ?: "Not assigned"} // STATUS: ${when (streamStatus) {
                             StreamStatus.STREAMING  -> "LINK STABLE"
                             StreamStatus.CONNECTING -> "CONNECTING"
                             StreamStatus.LOST       -> "DISCONNECTED"
@@ -107,6 +117,27 @@ fun SettingsScreen() {
                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                     Spacer(Modifier.height(20.dp))
 
+                    Text(if (local) "Local mode · no account, uploads or cloud access." else "Enterprise mode · account-scoped history and sync.")
+                    if (actionError != null) Text(actionError!!, color = MaterialTheme.colorScheme.error)
+                    Button(enabled = !busy, onClick = {
+                        busy = true; scope.launch {
+                            try { FatigueService.stopAndAwait(context); onConnectEsp() }
+                            catch (e: Exception) { actionError = e.message ?: "Monitoring cleanup failed" }
+                            finally { busy = false }
+                        }
+                    }) { Text("Connect / manage ESP") }
+                    if (local) TextButton(enabled = !busy, onClick = {
+                        busy = true; scope.launch {
+                            try { AppModes.beginEntry() }
+                            catch (e: Exception) { actionError = e.message ?: "Cannot open enterprise sign-in" }
+                            finally { busy = false }
+                        }
+                    }) { Text("Enterprise sign-in") }
+                    else {
+                        val driver by EnterpriseAuth.driver.collectAsState()
+                        Text(driver?.let { "${it.name} · ${it.orgId}" } ?: "Enterprise account unavailable")
+                        TextButton(enabled = !busy, onClick = { AppModes.requestLocal() }) { Text("Sign out and return to Local mode") }
+                    }
                     // ── 01. DEVICE ────────────────────────────────────────────
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -137,8 +168,8 @@ fun SettingsScreen() {
                     Spacer(Modifier.height(8.dp))
                     DeviceInfoCard(
                         label = "FIRMWARE",
-                        value = "v1.0.2-STABLE",
-                        badge = "LATEST",
+                        value = "Check installed ESP firmware",
+                        badge = "UNVERIFIED",
                         badgeColor = FatigueSuccess,
                     )
                     Spacer(Modifier.height(12.dp))
@@ -189,7 +220,16 @@ fun SettingsScreen() {
                         trailingIconColor = FatigueOnSurfaceMuted,
                         onClick = {
                             scope.launch {
-                                try { com.example.fatiguesense.enterprise.enterprise.EnterpriseExport.share(context) }
+                                try {
+                                    if (local) {
+                                        val events = FatigueDatabase.getLocalInstance(context).fatigueEventDao().getAll().map { it.toFatigueEvent() }
+                                        when (LogExportUtils.exportCsv(context, events)) {
+                                            ExportResult.NO_EVENTS -> snackbarHostState.showSnackbar("No Local-mode events to export")
+                                            ExportResult.ERROR -> snackbarHostState.showSnackbar("Failed to export local history")
+                                            else -> Unit
+                                        }
+                                    } else EnterpriseExport.share(context)
+                                }
                                 catch (e: Exception) { snackbarHostState.showSnackbar(e.message ?: "FAILED TO EXPORT LOGS") }
                             }
                         },
@@ -197,14 +237,14 @@ fun SettingsScreen() {
                     Spacer(Modifier.height(8.dp))
                     DataActionRow(
                         icon = Icons.Filled.DeleteForever,
-                        title = "CLEAR LOCAL LOGS",
-                        subtitle = "Clear uploaded local history; keep pending uploads",
+                        title = if (local) "CLEAR LOCAL HISTORY" else "CLEAR UPLOADED HISTORY",
+                        subtitle = if (local) "Clear Local-mode history; preserve legacy history" else "Clear this account’s uploaded history; keep pending uploads",
                         titleColor = FatigueError,
                         iconBgColor = FatigueError,
                         trailingIcon = Icons.Filled.Warning,
                         trailingIconColor = FatigueError,
                         onClick = {
-                            showClearDialog = true
+                            if (!busy) showClearDialog = true
                         },
                     )
 
@@ -223,7 +263,7 @@ fun SettingsScreen() {
                             },
                             title = {
                                 Text(
-                                    text = "CLEAR UPLOADED LOCAL LOGS?",
+                                    text = if (local) "CLEAR LOCAL HISTORY?" else "CLEAR UPLOADED HISTORY?",
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 1.sp,
@@ -232,7 +272,7 @@ fun SettingsScreen() {
                             },
                             text = {
                                 Text(
-                                    text = "Remove your completed, uploaded events from this phone? Pending uploads and cloud history are retained.",
+                                    text = if (local) "Stop monitoring and remove Local-mode events from this phone? Preserved legacy history is retained." else "Remove your completed, uploaded events from this phone? Pending uploads and cloud history are retained.",
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                             },
@@ -244,12 +284,21 @@ fun SettingsScreen() {
                                     ),
                                     onClick = {
                                         showClearDialog = false
+                                        busy = true
+                                        val owner = EnterpriseAuth.driver.value
+                                        val actionMode = mode
                                         scope.launch {
-                                            val driver = com.example.fatiguesense.enterprise.enterprise.EnterpriseAuth.driver.value
-                                            if (driver != null) {
-                                                com.example.fatiguesense.enterprise.enterprise.EnterpriseDatabase.get(context).dao().clearUploaded(driver.uid, driver.orgId)
-                                                snackbarHostState.showSnackbar("UPLOADED LOCAL HISTORY CLEARED")
-                                            }
+                                            try {
+                                                FatigueService.stopAndAwait(context)
+                                                check(AppModes.policy.mode.value == actionMode) { "Mode changed; retry." }
+                                                if (local) FatigueDatabase.getLocalInstance(context).fatigueEventDao().deleteAll()
+                                                else {
+                                                    check(EnterpriseAuth.driver.value == owner && owner != null) { "Account changed" }
+                                                    EnterpriseDatabase.get(context).dao().clearUploaded(owner.uid, owner.orgId)
+                                                }
+                                                snackbarHostState.showSnackbar("History cleared")
+                                            } catch (e: Exception) { actionError = e.message ?: "Failed to clear history" }
+                                            finally { busy = false }
                                         }
                                     },
                                 ) {

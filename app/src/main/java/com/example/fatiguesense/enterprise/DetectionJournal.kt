@@ -36,7 +36,11 @@ object DetectionJournal {
         }
     }
     suspend fun awaitInitialized() = initialized.await()
-    fun start(session: DriverSession) { commands.trySend { interrupt(); owner = session } }
+    fun start(session: DriverSession) { commands.trySend {
+        interrupt()
+        check(AppModes.policy.enterpriseOwner() == CloudOwner(session.driver.uid, session.driver.orgId))
+        owner = session
+    } }
     fun frame(sessionId: String, result: AnalysisResult, wall: Long = System.currentTimeMillis(), elapsed: Long = SystemClock.elapsedRealtime()) {
         commands.trySend {
             if (owner?.sessionId != sessionId) return@trySend
@@ -59,7 +63,10 @@ object DetectionJournal {
     fun gap(sessionId: String) { commands.trySend { if (owner?.sessionId == sessionId) interrupt() } }
     suspend fun stop() {
         val done = CompletableDeferred<Unit>()
-        commands.send { try { interrupt(); owner = null } finally { done.complete(Unit) } }
+        commands.send {
+            try { interrupt(); owner = null; done.complete(Unit) }
+            catch (e: Exception) { done.completeExceptionally(e); throw e }
+        }
         done.await()
     }
     private suspend fun edge(type: String, active: Boolean, wall: Long, elapsed: Long, result: AnalysisResult) {

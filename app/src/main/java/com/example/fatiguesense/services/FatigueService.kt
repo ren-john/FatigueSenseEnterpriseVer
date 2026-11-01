@@ -33,14 +33,21 @@ class FatigueService : Service() {
         val message = MutableStateFlow("")
         val transitioning = MutableStateFlow(false)
         private val alive = MutableStateFlow(false)
-        var cleanup: Job? = null
+        private val pendingCleanup = MonitoringCleanup()
+        var cleanup: Deferred<Unit>? = null
+            private set
+        private suspend fun awaitCleanup() {
+            cleanup?.join()
+            pendingCleanup.drain()
+        }
         suspend fun stopAndAwait(context: Context) {
             if (context.stopService(Intent(context, FatigueService::class.java))) alive.first { !it }
-            cleanup?.join()
+            awaitCleanup()
         }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var startedSession: DriverSession? = null
+    private var startedContext: MonitoringContext? = null
     private var terminalMessage: String? = null
 
     override fun onCreate() {
@@ -51,8 +58,21 @@ class FatigueService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         scope.launch {
             try {
-                cleanup?.join()
+                awaitCleanup()
                 FatigueManager.awaitStopped()
+                if (AppModes.policy.mode.value == AppMode.LOCAL) {
+                    message.value = "Checking local ESP…"
+                    EspConnection.prepareLocal(this@FatigueService)
+                    val local = MonitoringContext.Local(checkNotNull(EspConnection.verifiedId.value))
+                    local.requireMode(AppModes.policy.mode.value, AppModes.policy.enterpriseOwner())
+                    startedContext = local
+                    FatigueManager.start(this@FatigueService, local)
+                    message.value = "Local monitoring · stored only on this phone"
+                    transitioning.value = false
+                    return@launch
+                }
+                check(AppModes.policy.mode.value == AppMode.ENTERPRISE) { "Enterprise mode is required for this monitoring flow." }
+                DetectionJournal.initialize(this@FatigueService)
                 DetectionJournal.awaitInitialized()
                 val driver = EnterpriseAuth.driver.value ?: error("Sign in first")
                 message.value = "Finishing previous session…"
@@ -65,7 +85,8 @@ class FatigueService : Service() {
                 val session = startedSession!!
                 EnterpriseDatabase.get(this@FatigueService).dao().saveSession(LocalSession(session.sessionId, session.driver.uid, session.driver.orgId))
                 message.value = ""
-                FatigueManager.start(this@FatigueService)
+                startedContext = MonitoringContext.Enterprise(session)
+                FatigueManager.start(this@FatigueService, startedContext!!)
                 transitioning.value = false
                 while (isActive) {
                     UploadScheduler.enqueue(this@FatigueService)
@@ -104,30 +125,31 @@ class FatigueService : Service() {
         transitioning.value = true
         FatigueManager.stop()
         scope.cancel()
-        val previousCleanup = cleanup
-        cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                previousCleanup?.join()
-                scope.coroutineContext[Job]?.join()
-                FatigueManager.awaitStopped()
-                DetectionJournal.stop()
-                val ended = startedSession
-                if (EnterpriseAuth.session.value == ended) EnterpriseAuth.session.value = null
-                val dao = EnterpriseDatabase.get(applicationContext).dao()
-                if (ended != null) {
-                    dao.closeSession(ended.sessionId, System.currentTimeMillis())
-                    message.value = "Closing monitoring session…"
-                    try {
-                        SessionClosures.sync(dao, ended.driver)
-                        message.value = ""
-                    } catch (e: Exception) {
-                        message.value = "Monitoring stopped. Server closure pending; reconnect and retry Start."
+        val endedAt = System.currentTimeMillis()
+        cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO).async {
+            pendingCleanup.enqueue {
+                try {
+                    scope.coroutineContext[Job]?.join()
+                    FatigueManager.awaitStopped()
+                    if (startedContext is MonitoringContext.Enterprise) DetectionJournal.stop()
+                    val ended = startedSession
+                    if (EnterpriseAuth.session.value == ended) EnterpriseAuth.session.value = null
+                    if (ended != null) {
+                        val dao = EnterpriseDatabase.get(applicationContext).dao()
+                        dao.closeSession(ended.sessionId, endedAt)
+                        message.value = "Closing monitoring session…"
+                        try {
+                            SessionClosures.sync(dao, ended.driver)
+                            message.value = ""
+                        } catch (e: Exception) {
+                            message.value = "Monitoring stopped. Server closure pending; reconnect and retry Start."
+                        }
                     }
+                } finally {
+                    if (startedSession != null) UploadScheduler.enqueue(applicationContext)
+                    terminalMessage?.let { message.value = it }
+                    transitioning.value = false
                 }
-            } finally {
-                UploadScheduler.enqueue(applicationContext)
-                terminalMessage?.let { message.value = it }
-                transitioning.value = false
             }
         }
         alive.value = false

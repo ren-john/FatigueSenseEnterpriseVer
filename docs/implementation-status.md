@@ -1,5 +1,10 @@
 # Android implementation status — 2026-10-18
 
+Current Local/optional-Enterprise behavior and newer validation are recorded in
+[Local-mode validation](local-mode-validation.md) and
+[the sprint tracker](local-enterprise-sprints.md). The enterprise integration
+results below retain their original scope and limitations.
+
 2026-10-31 update: Stop/Start now flushes durable session closures independently
 of detection backlog and waits for old streaming/native/watchdog work to finish.
 Start rechecks the configured ESP. The web/backend support atomic manager-only

@@ -17,4 +17,15 @@ class EspIdentityTest {
             }
         }
     }
+
+    @org.junit.Test fun localKnownIdentityCannotBeBypassed() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { requireLocalEspIdentity("other", "known", true) }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { requireLocalEspIdentity(null, "known", true) }
+        requireLocalEspIdentity("known", "known", false)
+    }
+    @org.junit.Test fun localLegacyNeedsExplicitConfirmation() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { requireLocalEspIdentity(null, null, false) }
+        requireLocalEspIdentity(null, null, true)
+        requireLocalEspIdentity("new", null, false)
+    }
 }

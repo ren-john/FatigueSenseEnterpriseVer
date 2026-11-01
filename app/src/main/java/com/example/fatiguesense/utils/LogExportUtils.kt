@@ -36,9 +36,9 @@ object LogExportUtils {
         isExporting = true
         return try {
             val csv = buildString {
-                appendLine("timestamp,datetime,duration_ms,ear_value,severity")
+                appendLine("timestamp,datetime,duration_ms,ear_value,severity,trigger_type")
                 events.forEach { e ->
-                    appendLine("${e.timestampMs},\"${e.dateTimeLabel}\",${e.durationMs},${e.earValue},${e.severity.name}")
+                    appendLine("${e.timestampMs},\"${e.dateTimeLabel}\",${e.durationMs},${e.earValue},${e.severity.name},${e.triggerType.name}")
                 }
             }
 
