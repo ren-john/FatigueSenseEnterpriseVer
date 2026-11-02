@@ -140,7 +140,8 @@ class FatigueAnalyzer(
     private val warmupBuffer = mutableListOf<Float>()   // raw qualified EAR samples
     private var baselineEar: Float = priorBaselineEar   // µEAR after trimmed mean
     private var calibrationState: CalibrationState =
-        if (priorBaselineEar > 0f) CalibrationState.READY else CalibrationState.WARMING_UP
+        if (!adaptiveModeEnabled) CalibrationState.MANUAL
+        else if (priorBaselineEar > 0f) CalibrationState.READY else CalibrationState.WARMING_UP
 
     // Effective EAR threshold — recalculated whenever baseline changes
     private var computedEarThreshold: Float = earThreshold
@@ -171,20 +172,27 @@ class FatigueAnalyzer(
     }
 
     // ── Reset warmup (called when user presses "Re-calibrate") ────────────────
+    @Synchronized
     fun resetCalibration() {
         warmupBuffer.clear()
         perclosWindow.clear()
         baselineEar = 0f
         computedEarThreshold = earThreshold
-        calibrationState = CalibrationState.WARMING_UP
+        calibrationState = if (adaptiveModeEnabled) CalibrationState.WARMING_UP else CalibrationState.MANUAL
         consecutiveLowEarFrames = 0
         consecutiveYawnFrames = 0
         yawnActive = false
         yawnTimestampsMs.clear()
-        Log.i(TAG, "Calibration reset — entering WARMING_UP")
+        _result.value = AnalysisResult(
+            calibrationState = calibrationState,
+            computedEarThreshold = computedEarThreshold,
+            warmupProgress = warmupProgress(),
+        )
+        Log.i(TAG, "Calibration reset — entering $calibrationState")
     }
 
     // ── Update manual threshold (called from slider) ──────────────────────────
+    @Synchronized
     fun setManualMode(threshold: Float) {
         adaptiveModeEnabled = false
         calibrationState = CalibrationState.MANUAL
@@ -193,13 +201,14 @@ class FatigueAnalyzer(
     }
 
     // ── Re-enable adaptive mode (called when toggle flipped back) ────────────
+    @Synchronized
     fun setAdaptiveMode() {
         adaptiveModeEnabled = true
         if (baselineEar > 0f) {
             calibrationState = CalibrationState.READY
             computedEarThreshold = calculateAdaptiveThreshold(baselineEar)
         } else {
-            calibrationState = CalibrationState.WARMING_UP
+            resetCalibration()
         }
     }
 
@@ -207,6 +216,13 @@ class FatigueAnalyzer(
         private set
 
     suspend fun processFrame(bitmap: Bitmap) = withContext(Dispatchers.Default) {
+        processFrameLocked(bitmap)
+    }
+
+    // Serialize recalibration with inference so an in-flight frame cannot restore
+    // an old alert after the calibration reset has been published.
+    @Synchronized
+    private fun processFrameLocked(bitmap: Bitmap) {
         lastObservation = null
         // FPS calculation
         frameCount++
@@ -236,7 +252,7 @@ class FatigueAnalyzer(
                     isYawnFatigueTriggered = yawnsInWindow >= YAWN_ALERT_THRESHOLD,
                 )
                 lastObservation = _result.value
-                return@withContext
+                return
             }
 
             val boundingBox = detection.boundingBox
@@ -258,7 +274,7 @@ class FatigueAnalyzer(
                     computedEarThreshold = computedEarThreshold,
                     qualityStatus = if (eligibility.headTurned) FrameQuality.HEAD_TURNED else FrameQuality.FACE_CLIPPED)
                 lastObservation = _result.value
-                return@withContext
+                return
             }
 
             val modelPoints = detection.points
@@ -304,13 +320,29 @@ class FatigueAnalyzer(
                 }
             }
 
+            // Calibration frames supply live measurements only. Do not carry eye,
+            // yawn, or PERCLOS history into monitoring, including the final sample.
+            if (calibrationState == CalibrationState.WARMING_UP ||
+                qualityStatus == FrameQuality.WARMING_UP_ACCEPTED) {
+                consecutiveLowEarFrames = 0
+                consecutiveYawnFrames = 0
+                yawnActive = false
+                yawnTimestampsMs.clear()
+                perclosWindow.clear()
+                _result.value = AnalysisResult(
+                    boundingBox = boundingBox, landmarks = pts, fps = currentFps,
+                    ear = avgEAR, mar = mar, earValid = selectedEye.valid, marValid = marValid,
+                    eyeSelection = selectedEye.selection, headYaw = pose.yaw,
+                    calibrationState = calibrationState, warmupProgress = warmupProgress(),
+                    qualityStatus = qualityStatus, baselineEar = baselineEar,
+                    computedEarThreshold = computedEarThreshold,
+                )
+                lastObservation = _result.value
+                return
+            }
+
             // ── Hysteresis & Alert Evaluation ─────────────────────────────────
-            // During WARMING_UP (before baseline is established), fall back to manual earThreshold
-            // so fatigue alerts and ESP32 buzzer triggers still operate safely.
-            val activeThreshold = if (calibrationState == CalibrationState.WARMING_UP && baselineEar <= 0f)
-                earThreshold
-            else
-                computedEarThreshold
+            val activeThreshold = computedEarThreshold
 
             val eyeClosed = selectedEye.valid && avgEAR < activeThreshold
             if (eyeClosed) consecutiveLowEarFrames++ else consecutiveLowEarFrames = 0

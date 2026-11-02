@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -71,7 +70,9 @@ class MjpegStreamer(private val networkProvider: () -> Network?) {
                     connection = ((network?.openConnection(url) ?: url.openConnection()) as HttpURLConnection).also {
                         it.instanceFollowRedirects = false
                         it.connectTimeout = 5_000
-                        it.readTimeout   = 5_000
+                        it.readTimeout   = FRAME_TIMEOUT_MS.toInt()
+                        it.useCaches = false
+                        it.setRequestProperty("Connection", "close")
                     }
                     activeConnection = connection
                     if (!isStreaming || networkProvider() != network) continue
@@ -80,55 +81,55 @@ class MjpegStreamer(private val networkProvider: () -> Network?) {
                     lastStreamFpsTime = SystemClock.elapsedRealtime()
                     Log.i(TAG, "Stream connected")
 
-                    val buffer      = ByteArray(4096)
-                    val imageBuffer = ByteArrayOutputStream(32 * 1024)
+                    val buffer = ByteArray(16 * 1024)
+                    val parser = JpegFrameParser()
                     var lastValidFrame = SystemClock.elapsedRealtime()
-                    var inImage     = false
-                    var prevByte: Byte = 0
+                    var statsStarted = lastValidFrame
+                    var receivedBytes = 0L
+                    var decodedFrames = 0
+                    var maxReadMs = 0L
+                    var maxDecodeMs = 0L
 
                     while (isStreaming && currentCoroutineContext().isActive) {
+                        val readStarted = SystemClock.elapsedRealtime()
                         val bytesRead = inputStream.read(buffer)
-                        if (bytesRead == -1) break
-                        if (SystemClock.elapsedRealtime() - lastValidFrame > 5_000) {
-                            throw java.io.IOException("No valid JPEG for 5 seconds")
-                        }
-
-                        for (i in 0 until bytesRead) {
-                            val b = buffer[i]
-                            if (!inImage) {
-                                // Look for JPEG SOI marker: FF D8
-                                if (prevByte == 0xFF.toByte() && b == 0xD8.toByte()) {
-                                    inImage = true
-                                    imageBuffer.reset()
-                                    imageBuffer.write(0xFF)
-                                    imageBuffer.write(0xD8)
-                                }
-                            } else {
-                                if (imageBuffer.size() >= 1024 * 1024) {
-                                    throw java.io.IOException("JPEG exceeds 1 MiB; resetting malformed stream")
-                                }
-                                imageBuffer.write(b.toInt())
-                                // Look for JPEG EOI marker: FF D9
-                                if (prevByte == 0xFF.toByte() && b == 0xD9.toByte()) {
-                                    val jpegBytes = imageBuffer.toByteArray()
-                                    val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-                                    if (bitmap != null) {
-                                        _streamStatus.value = StreamStatus.STREAMING
-                                        _frames.value = bitmap
-                                        lastFrameTimeMs = SystemClock.elapsedRealtime()
-                                        lastValidFrame = lastFrameTimeMs
-                                        streamFrameCount++
-                                        val now = SystemClock.elapsedRealtime()
-                                        if (now - lastStreamFpsTime >= 1000) {
-                                            _streamFps.value = streamFrameCount
-                                            streamFrameCount = 0
-                                            lastStreamFpsTime = now
-                                        }
-                                    }
-                                    inImage = false
+                        maxReadMs = maxOf(maxReadMs, SystemClock.elapsedRealtime() - readStarted)
+                        if (bytesRead == -1) throw java.io.EOFException("Camera closed stream")
+                        receivedBytes += bytesRead
+                        parser.consume(buffer, bytesRead) { jpegBytes, size ->
+                            val decodeStarted = SystemClock.elapsedRealtime()
+                            val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, size)
+                            maxDecodeMs = maxOf(maxDecodeMs, SystemClock.elapsedRealtime() - decodeStarted)
+                            if (bitmap != null) {
+                                val now = SystemClock.elapsedRealtime()
+                                // Publish freshness before STREAMING so the watchdog never
+                                // observes a new connection with the previous session's time.
+                                lastFrameTimeMs = now
+                                lastValidFrame = now
+                                _streamStatus.value = StreamStatus.STREAMING
+                                _frames.value = bitmap
+                                streamFrameCount++
+                                decodedFrames++
+                                val elapsed = now - lastStreamFpsTime
+                                if (elapsed >= 1000) {
+                                    _streamFps.value = (streamFrameCount * 1000L / elapsed).toInt()
+                                    streamFrameCount = 0
+                                    lastStreamFpsTime = now
                                 }
                             }
-                            prevByte = b
+                        }
+                        val statsNow = SystemClock.elapsedRealtime()
+                        if (statsNow - statsStarted >= 5_000) {
+                            Log.d(TAG, "Stream stats: frames=$decodedFrames bytes=$receivedBytes " +
+                                "elapsedMs=${statsNow - statsStarted} maxReadMs=$maxReadMs maxDecodeMs=$maxDecodeMs")
+                            statsStarted = statsNow
+                            receivedBytes = 0L
+                            decodedFrames = 0
+                            maxReadMs = 0L
+                            maxDecodeMs = 0L
+                        }
+                        if (SystemClock.elapsedRealtime() - lastValidFrame > FRAME_TIMEOUT_MS) {
+                            throw java.io.IOException("No valid JPEG for $FRAME_TIMEOUT_MS ms")
                         }
                     }
 
@@ -160,6 +161,7 @@ class MjpegStreamer(private val networkProvider: () -> Network?) {
     }
 
     companion object {
+        const val FRAME_TIMEOUT_MS = 5_000L
         private const val TAG = "MjpegStreamer"
     }
 }

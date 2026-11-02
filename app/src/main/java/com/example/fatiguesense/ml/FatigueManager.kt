@@ -76,7 +76,7 @@ object FatigueManager {
 
     private const val TAG              = "FatigueManager"
     private const val WATCHDOG_POLL_MS = 500L
-    private const val WATCHDOG_GAP_MS  = 2_000L
+    private const val WATCHDOG_GAP_MS = MjpegStreamer.FRAME_TIMEOUT_MS
 
     // SharedPreferences keys
     private const val PREFS_NAME          = "fatiguesense_prefs"
@@ -464,6 +464,14 @@ object FatigueManager {
                     // is deliberately held, and EAR->MAR requires a fresh 1.5 s yawn.
                     val current = _activeAlertState.value
                     when {
+                        result.calibrationState == CalibrationState.WARMING_UP -> {
+                            _activeAlertState.value = ActiveAlertState.NONE
+                            stateAbsentSince = 0L
+                            marRecoveryCandidateAt = 0L
+                            if (current != ActiveAlertState.NONE) {
+                                launch { Esp32AlertSender.sendForcedClear().await() }
+                            }
+                        }
                         isAlertNow && current != ActiveAlertState.EAR_FATIGUE -> {
                             _activeAlertState.value = ActiveAlertState.EAR_FATIGUE
                             stateAbsentSince = 0L
@@ -522,7 +530,8 @@ object FatigueManager {
 
         streamJob?.invokeOnCompletion { phoneAlarm.close() }
 
-        // 5. Independent watchdog — fires even if the ML pipeline is stuck
+        // 5. Watch decoded-frame freshness, independently of inference. Use the
+        // reader timeout so a short stall does not force a reconnect prematurely.
         watchdogJob = managerScope.launch {
             while (isActive) {
                 delay(WATCHDOG_POLL_MS)
