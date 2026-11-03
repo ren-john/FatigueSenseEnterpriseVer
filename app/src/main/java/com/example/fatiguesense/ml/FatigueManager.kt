@@ -328,7 +328,7 @@ object FatigueManager {
             // Phone audio follows the detector, independently of ESP command delivery.
             launch(Dispatchers.Main.immediate) {
                 combine(a.result, _streamStatus) { result, status ->
-                    result.isFatigueAlert && status == StreamStatus.STREAMING
+                    shouldPlayPhoneAlert(result, status)
                 }.collect { phoneAlarm.setAlertActive(it) }
             }
 
@@ -394,7 +394,7 @@ object FatigueManager {
                         alertStartEar  = result.ear
                         wasAlertActive = true
                         _sessionAlertCount.value++
-                        // Signal ESP32 buzzer + red LED (dormant until isEnabled = true)
+                        // Physical activation is suppressed by Esp32AlertSender; phone audio follows the detector.
                         _activeAlertState.value = ActiveAlertState.EAR_FATIGUE
                         launch { Esp32AlertSender.onAlertRisingEdge().await() }
                     } else if (!isAlertNow && wasAlertActive) {

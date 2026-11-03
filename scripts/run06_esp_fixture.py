@@ -19,6 +19,7 @@ LOCK = threading.Lock()
 DEFAULT = dict(device_id="fixture-esp", mode="ap", connected=False, camera_ready=True, restarting=False)
 STATE = dict(DEFAULT)
 STREAMING = True
+ALERTS = []
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,7 +43,12 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.update(DEFAULT)
                 STREAMING = True
                 CURRENT_JPEG = JPEG
+                ALERTS.clear()
             self.reply(dict(saved=True))
+        elif path.path == "/test/alerts":
+            with LOCK:
+                alerts = list(ALERTS)
+            self.reply(dict(alerts=alerts))
         elif path.path == "/test/frame":
             CURRENT_JPEG = FACE if parse_qs(path.query).get("kind", [""])[0] == "face" else JPEG
             self.reply(dict(ok=True))
@@ -51,8 +57,15 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(dict(streaming=STREAMING))
         elif path.path == "/api/wifi":
             with LOCK:
-                self.reply(dict(STATE))
+                state = dict(STATE)
+            if state.get("api_code", 200) != 200:
+                self.send_error(state["api_code"])
+            else:
+                self.reply(state)
         elif path.path in ("/health", "/alert"):
+            if path.path == "/alert":
+                with LOCK:
+                    ALERTS.append(self.path)
             self.reply(dict(ok=True))
         elif path.path == "/stream":
             self.send_response(200)

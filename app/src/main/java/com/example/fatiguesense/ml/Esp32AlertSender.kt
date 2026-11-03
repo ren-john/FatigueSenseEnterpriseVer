@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.withLock
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Ordered ESP32 alert transport. The firmware contract is type + one 32-bit seq. */
+/** Ordered ESP32 clear transport. Buzzer activation is temporarily disabled in the app. */
 object Esp32AlertSender {
     private const val TAG = "Esp32AlertSender"
     private const val TIMEOUT_MS = 1_500
@@ -18,16 +18,13 @@ object Esp32AlertSender {
     private const val PREFS = "fatiguesense_esp32"
     private const val SESSION = "session_id"
     private const val COUNTER = "sequence_counter"
-    private const val HEARTBEAT_MS = 2_000L
 
     var isEnabled = true
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var heartbeatJob: Job? = null
     private var sessionId = 0
     private var counter = 0
     private var context: Context? = null
-    @Volatile private var currentAlertType: String? = null
     @Volatile private var generation = 0L
     @Volatile private var sessionActive = false
 
@@ -40,26 +37,13 @@ object Esp32AlertSender {
         sessionId = (prefs.getInt(SESSION, 0) + 1) and 0xffff
         counter = 0
         prefs.edit().putInt(SESSION, sessionId).putInt(COUNTER, counter).apply()
-        currentAlertType = null
-        heartbeatJob?.cancel()
         // Session initialization is complete before the first forced clear.
         sendForcedClear()
-        heartbeatJob = scope.launch {
-            while (isActive) {
-                delay(HEARTBEAT_MS)
-                currentAlertType?.let {
-                    if (it == "yawn" || it == "fatigue") sendType(it)
-                }
-            }
-        }
     }
 
     @Synchronized fun stopSession() {
         generation++
         sessionActive = false
-        heartbeatJob?.cancel()
-        heartbeatJob = null
-        currentAlertType = null
     }
 
     fun onAlertRisingEdge() = sendType("fatigue")
@@ -67,21 +51,22 @@ object Esp32AlertSender {
     fun onYawnAlert() = sendType("yawn")
     fun onYawnFatigue() = sendType("yawn_fatigue")
     fun sendForcedClear() = sendType("clear", forced = true)
-    fun onNetworkAvailable() = sendType(currentAlertType ?: "clear", forced = true)
+    fun onNetworkAvailable() = sendForcedClear()
     suspend fun sendPing(): Boolean = withContext(Dispatchers.IO) {
         if (!isEnabled) return@withContext true
         request("/health") // Silent reachability check; legacy /ping blinks an LED.
     }
 
     private fun sendType(type: String, forced: Boolean = false): Deferred<Boolean> {
+        // Phone MP3 alerts replace physical alarms for now. Keep clear commands so
+        // a previously latched ESP buzzer can still be switched off, including on reconnect.
+        if (type != "clear") return CompletableDeferred(true)
         // Queued commands must not spill into a replacement monitoring session.
         val network = com.example.fatiguesense.enterprise.enterprise.EspConnection.network
         val targetHost = com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value
         val commandGeneration = generation
         return scope.async {
             if ((type != "clear" && !sessionActive) || commandGeneration != generation || targetHost != com.example.fatiguesense.enterprise.enterprise.EspConnection.host.value) return@async false
-            if (type == "yawn" || type == "fatigue") currentAlertType = type
-            if (type == "clear") currentAlertType = null
             Log.i(TAG, "Dispatching alert type=$type forced=$forced")
             send(type, forced, network, targetHost, commandGeneration)
         }

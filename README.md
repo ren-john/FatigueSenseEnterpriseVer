@@ -63,6 +63,15 @@ confirmation and is labeled as having unverified hardware identity. Reset Local
 pairing to select different hardware. Enterprise mode additionally requires the
 administrator-assigned ID, including exact manual ID entry for older firmware.
 
+For **CameraOnly** firmware that returns HTTP 404 for `/api/wifi`, use Local mode,
+expand **Connection options**, enable **My camera uses older firmware**, and tap
+**Connect camera**. The app verifies a decoded video frame from port 81 `/stream`
+before pairing and on reconnect, and remembers the manual pairing choice. Wi-Fi
+provisioning/reset controls are unavailable on this firmware. A previously saved
+hardware ID cannot be bypassed: use **Pair a different camera** when intentionally
+changing hardware or firmware that no longer reports that ID. Enterprise setup
+continues to require the camera status endpoint and assigned identity.
+
 Use **Settings → Enterprise sign-in** to opt in to enterprise features. Successful
 access validation remembers Enterprise mode across restarts. Cancelled/failed entry
 returns to Local mode; failed restoration offers retry and **Return to Local mode**.
@@ -80,15 +89,18 @@ the existing EAR/MAR, calibration, PERCLOS and alert pipeline. Complete a fresh
 Face Setup calibration after installing this version; settings from custom models
 are kept separate. See [model details and validation](MODEL_SWITCHING.md).
 
-## Phone EAR alarm
+## Phone alerts (ESP buzzer temporarily disabled)
 
-The phone plays `asset/ndrrmc-alert-1.mp3` alongside the ESP32 buzzer when an EAR
-fatigue alert triggers. The bundled copy is `app/src/main/res/raw/ndrrmc_alert_1.mp3`.
-It loops for the active EAR alert and stops on recovery, stream loss/watchdog timeout,
-or monitoring shutdown. Yawn-only alerts do not trigger this sound. Playback uses
+The phone plays `asset/ndrrmc-alert-1.mp3` for EAR drowsiness and yawn alerts.
+The bundled copy is `app/src/main/res/raw/ndrrmc_alert_1.mp3`; both alert types use
+this clip until a separate yawn MP3 is supplied. It loops while either detector
+alert is active and stops on recovery, stream loss/watchdog timeout, or monitoring
+shutdown. ESP buzzer activation commands and alert heartbeats are suppressed in
+the Android app. Clear/off commands remain enabled on startup, recovery, reconnect,
+and shutdown to silence any previously latched buzzer. ESP firmware is unchanged. Playback uses
 the phone's alarm audio settings and requests temporary audio focus; it pauses
 when another audio source temporarily takes focus. Audio errors do not block
-ESP32 signaling or event logging.
+ESP32 clear commands or event logging.
 
 ## Driver and web integration
 

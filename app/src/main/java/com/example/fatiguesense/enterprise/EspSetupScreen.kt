@@ -54,7 +54,7 @@ fun EspSetupScreen(driver: Driver? = null, assignment: Assignment? = null, onDon
     var savedHost by remember(local, assignment) { mutableStateOf(if (local) EspConnection.savedLocalHost(context) else "") }
     var ip by rememberSaveable(local, assignment) { mutableStateOf(if (local) savedHost.ifBlank { "192.168.4.1" } else EspConnection.host.value.ifBlank { "192.168.4.1" }) }
     var setupPassword by remember { mutableStateOf("safedriving") }
-    var legacy by rememberSaveable(local, assignment) { mutableStateOf(false) }
+    var legacy by rememberSaveable(local, assignment) { mutableStateOf(local && EspConnection.savedLocalLegacy(context)) }
     var manualId by rememberSaveable(assignment) { mutableStateOf("") }
     var ssid by rememberSaveable(local) { mutableStateOf(setupPrefs.getString("ssid", "") ?: "") }
     var password by remember { mutableStateOf("") }
@@ -74,6 +74,9 @@ fun EspSetupScreen(driver: Driver? = null, assignment: Assignment? = null, onDon
     val configured by EspConnection.configuredAssignment.collectAsState()
     val ready = verified != null && (if (local) localReady else configured == assignment)
     val enabled = !busy && !transitioning && !monitoring
+    val cameraOnly = local && (details?.optBoolean("camera_only")
+        ?: (savedHost == ip && EspConnection.savedLocalCameraOnly(context)))
+    val wifiSettingsEnabled = enabled && !cameraOnly
 
     fun notice(title: String, text: String, kind: SetupTone = SetupTone.INFO) {
         messageTitle = title; message = text; tone = kind
@@ -121,6 +124,9 @@ fun EspSetupScreen(driver: Driver? = null, assignment: Assignment? = null, onDon
         notice("Camera is ready", buildString {
             append("Connected at $ip. Open the dashboard to start monitoring.")
             if (manual) append(" You confirmed this camera manually; its hardware identity could not be checked.")
+            if (status?.optBoolean("camera_only") == true || (local && EspConnection.savedLocalCameraOnly(context))) {
+                append(" Video verified. This firmware doesn’t support Wi-Fi setup from the app.")
+            }
             if (recovery) append(" Using the camera’s recovery Wi-Fi; it hasn’t joined your phone’s hotspot.")
         }, SetupTone.SUCCESS)
     }
@@ -224,36 +230,43 @@ fun EspSetupScreen(driver: Driver? = null, assignment: Assignment? = null, onDon
                         Text("My camera uses older firmware", style = MaterialTheme.typography.bodyMedium)
                     }
                     if (legacy) {
-                        Text(if (local) "Only enable this if the camera cannot report its ID. You’re confirming this is your camera; the app cannot verify its hardware identity." else "Only use this if the camera cannot report its ID. Enter the assigned ID exactly as shown above.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (local) "Enable this for cameras without an ID or Wi-Fi setup support. The app checks video for camera-only firmware. You’re confirming this is your camera; its hardware identity cannot be verified." else "Only use this if the camera cannot report its ID. Enter the assigned ID exactly as shown above.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (!local) OutlinedTextField(manualId, { manualId = it; invalidate() }, modifier = Modifier.fillMaxWidth(), enabled = enabled, label = { Text("Assigned camera ID") }, singleLine = true)
                     }
                     TextButton(enabled = enabled, onClick = {
                         perform("Reading camera status…") {
-                            details = EspConnection.status(context, ip, setupPassword)
+                            details = if (local) EspConnection.localStatus(context, ip, setupPassword, legacy)
+                                else EspConnection.status(context, ip, setupPassword)
                             notice("Camera status received", "Status alone doesn’t verify the camera. Tap Connect camera before monitoring.")
                         }
                     }) { Text("Check camera status") }
                     details?.let { status ->
                         SetupStatusRow("Camera", if (status.optBoolean("camera_ready")) "Ready" else "Not ready")
-                        SetupStatusRow("Phone hotspot", if (status.optBoolean("connected")) "Joined" else "Not joined")
-                        SetupStatusRow("Camera Wi-Fi", if (status.optBoolean("hotspot_active")) "Available" else "Off")
-                        SetupStatusRow("Restarting", if (status.optBoolean("restarting")) "Yes · wait a moment" else "No")
+                        if (status.optBoolean("camera_only")) {
+                            SetupStatusRow("Firmware", "Camera-only · video verified")
+                            SetupStatusRow("Wi-Fi setup", "Unavailable on this firmware")
+                        } else {
+                            SetupStatusRow("Phone hotspot", if (status.optBoolean("connected")) "Joined" else "Not joined")
+                            SetupStatusRow("Camera Wi-Fi", if (status.optBoolean("hotspot_active")) "Available" else "Off")
+                            SetupStatusRow("Restarting", if (status.optBoolean("restarting")) "Yes · wait a moment" else "No")
+                        }
                     }
                 }
             }
             SetupCard {
                 SetupExpander("Use your phone’s hotspot", "Optional · connect through your phone instead", Icons.Default.PhonelinkSetup, hotspotOptions, { hotspotOptions = !hotspotOptions }) {
+                    if (cameraOnly) Text("This camera’s firmware doesn’t support Wi-Fi changes from the app. Keep using its current Wi-Fi connection.", style = MaterialTheme.typography.bodyMedium)
                     Text("You can skip this when using FatigueSense_Cam. To use your phone’s hotspot, set it to 2.4 GHz and enter its details below.", style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(ssid, { ssid = it }, modifier = Modifier.fillMaxWidth(), enabled = enabled, label = { Text("Phone hotspot name") }, singleLine = true)
-                    SetupPasswordField(password, { password = it }, "Hotspot password", enabled)
+                    OutlinedTextField(ssid, { ssid = it }, modifier = Modifier.fillMaxWidth(), enabled = wifiSettingsEnabled, label = { Text("Phone hotspot name") }, singleLine = true)
+                    SetupPasswordField(password, { password = it }, "Hotspot password", wifiSettingsEnabled)
                     Text("Saving restarts the camera. Then turn on your phone’s hotspot and reconnect to the camera.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(enabled = enabled && ssid.isNotBlank(), modifier = Modifier.fillMaxWidth(), onClick = {
+                    Button(enabled = wifiSettingsEnabled && ssid.isNotBlank(), modifier = Modifier.fillMaxWidth(), onClick = {
                         perform("Checking hotspot settings…") {
                             EspConnection.validateCredentials(ssid, password)
                             save(JSONObject().put("mode", "sta").put("ssid", ssid).put("password", password))
                         }
                     }) { Text("Save and restart camera") }
-                    TextButton(enabled = enabled, onClick = { confirmation = SetupConfirmation.USE_SAVED }) { Text("Use hotspot saved on camera") }
+                    TextButton(enabled = wifiSettingsEnabled, onClick = { confirmation = SetupConfirmation.USE_SAVED }) { Text("Use hotspot saved on camera") }
                     TextButton(enabled = enabled, onClick = { context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS)) }) { Text("Open phone hotspot settings") }
                 }
             }
@@ -263,8 +276,9 @@ fun EspSetupScreen(driver: Driver? = null, assignment: Assignment? = null, onDon
                     Text("1. Restart the camera and wait about 30 seconds.\n2. Join FatigueSense_Cam and stay connected without internet.\n3. Return here, enter 192.168.4.1 and tap Connect camera.", style = MaterialTheme.typography.bodyMedium)
                     Text("If you use your phone’s hotspot, enable it and tap Reconnect saved camera. Automatic discovery needs compatible camera firmware.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     HorizontalDivider()
-                    TextButton(enabled = enabled, onClick = { confirmation = SetupConfirmation.DIRECT }) { Text("Switch camera to direct Wi-Fi") }
-                    TextButton(enabled = enabled, onClick = { confirmation = SetupConfirmation.FORGET_WIFI }) { Text("Remove saved hotspot from camera") }
+                    if (cameraOnly) Text("Wi-Fi reset controls need newer camera firmware. Pairing controls below are still available.", style = MaterialTheme.typography.bodySmall)
+                    TextButton(enabled = wifiSettingsEnabled, onClick = { confirmation = SetupConfirmation.DIRECT }) { Text("Switch camera to direct Wi-Fi") }
+                    TextButton(enabled = wifiSettingsEnabled, onClick = { confirmation = SetupConfirmation.FORGET_WIFI }) { Text("Remove saved hotspot from camera") }
                     TextButton(enabled = enabled, onClick = { confirmation = SetupConfirmation.RESET_PAIRING }) { Text("Pair a different camera") }
                 }
             }

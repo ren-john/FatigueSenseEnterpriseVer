@@ -6,6 +6,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.fatiguesense.enterprise.MainActivity
 import com.example.fatiguesense.enterprise.ml.FatigueManager
+import com.example.fatiguesense.enterprise.ml.Esp32AlertSender
 import com.example.fatiguesense.enterprise.ml.StreamStatus
 import com.example.fatiguesense.enterprise.db.FatigueDatabase
 import com.example.fatiguesense.enterprise.services.FatigueService
@@ -60,6 +61,9 @@ class LocalEspRuntimeTest {
         }
     }
     private fun fixture(path: String, body: JSONObject? = null) {
+        fixtureResponse(path, body)
+    }
+    private fun fixtureResponse(path: String, body: JSONObject? = null): JSONObject {
         val connection = URL("http://127.0.0.1:18080$path").openConnection(Proxy.NO_PROXY) as HttpURLConnection
         try {
             connection.connectTimeout = 3000; connection.readTimeout = 3000
@@ -68,7 +72,7 @@ class LocalEspRuntimeTest {
                 connection.outputStream.use { it.write(body.toString().toByteArray()) }
             }
             check(connection.responseCode == 200)
-            connection.inputStream.close()
+            return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally { connection.disconnect() }
     }
     private fun waitFor(description: String, condition: () -> Boolean) {
@@ -79,6 +83,30 @@ class LocalEspRuntimeTest {
     private suspend fun expectRejected(action: suspend () -> Unit) {
         try { action(); fail("Expected connection rejection") }
         catch (_: IllegalArgumentException) { /* Firmware status or identity rejected. */ }
+    }
+    @Test fun phoneAlertsNeverActivateEspBuzzerAndReconnectStillClearsIt() = runBlocking {
+        EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", false)
+        Esp32AlertSender.startSession(context)
+        try {
+            // Clear/off commands must still reach the verified ESP.
+            assertTrue(Esp32AlertSender.sendForcedClear().await())
+            assertTrue(Esp32AlertSender.onAlertRisingEdge().await())
+            assertTrue(Esp32AlertSender.onYawnAlert().await())
+            assertTrue(Esp32AlertSender.onYawnFatigue().await())
+            // Cover the former two-second activation heartbeat as well.
+            SystemClock.sleep(2_200)
+            assertTrue(Esp32AlertSender.onNetworkAvailable().await())
+            assertTrue(Esp32AlertSender.onAlertFallingEdge().await())
+        } finally {
+            Esp32AlertSender.stopSession()
+            assertTrue(Esp32AlertSender.sendForcedClear().await())
+        }
+        val received = fixtureResponse("/test/alerts").getJSONArray("alerts")
+        val commands = (0 until received.length()).map { android.net.Uri.parse(received.getString(it)) }
+        assertEquals("Startup, explicit clear, reconnect, recovery and stop", 5, commands.size)
+        assertTrue("Only buzzer clear commands may reach HTTP: $commands", commands.all {
+            it.getQueryParameter("type") == "clear" && it.getQueryParameter("outputs") == "buzzer"
+        })
     }
     @Test fun savedAcknowledgementAndUnexpectedIdentityCannotGrantReadiness() = runBlocking {
         EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", false)
@@ -112,6 +140,65 @@ class LocalEspRuntimeTest {
             assertTrue(e.message!!.contains("Stay connected without internet"))
         }
         assertTrue(FirebaseApp.getApps(context).isEmpty())
+    }
+    @Test fun cameraOnlyFirmwareRequiresConfirmationAndCannotReplaceKnownIdentity() = runBlocking {
+        fixture("/test/status", JSONObject().put("api_code", 404))
+        expectRejected { EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", false) }
+        assertFalse(EspConnection.localReady.value)
+        assertTrue("No stream probe before confirmation", destinations.none { it.path == "/stream" })
+        fixture("/test/reset")
+        EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", false)
+        fixture("/test/status", JSONObject().put("api_code", 404))
+        expectRejected { EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", true) }
+        assertEquals("fixture-esp", EspConnection.savedLocalId(context))
+        assertFalse(EspConnection.localReady.value)
+    }
+    @Test fun cameraOnlyFallbackDoesNotBypassAuthenticationOrMissingVideo() = runBlocking {
+        fixture("/test/status", JSONObject().put("api_code", 401))
+        try {
+            EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", true)
+            fail("Authentication failure must not enter camera-only mode")
+        } catch (e: EspHttpException) { assertEquals(401, e.code) }
+        assertTrue(destinations.none { it.path == "/stream" })
+        fixture("/test/status", JSONObject().put("api_code", 404))
+        fixture("/test/stream?enabled=0")
+        try {
+            EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", true)
+            fail("A successful stream HTTP response without frames must not grant readiness")
+        } catch (_: IllegalStateException) { /* No decoded video frame. */ }
+        assertFalse(EspConnection.localReady.value)
+        assertNull(EspConnection.verifiedId.value)
+        assertEquals("", EspConnection.savedLocalHost(context))
+    }
+    @Test fun cameraOnlyFirmwareStreamsReconnectsAndRemembersManualPairing() = runBlocking {
+        fixture("/test/status", JSONObject().put("api_code", 404))
+        val result = EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", true)
+        assertTrue(result.getBoolean("camera_only"))
+        assertTrue(EspConnection.savedLocalLegacy(context))
+        assertTrue(EspConnection.savedLocalCameraOnly(context))
+        assertNull(EspConnection.savedLocalId(context))
+        assertEquals("manual-local", EspConnection.verifiedId.value)
+        // Re-entering setup restores the saved choice; reconnect must probe again.
+        EspConnection.clear()
+        EspConnection.connectLocal(context, "safedriving", EspConnection.savedLocalLegacy(context))
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { it.startForegroundService(Intent(it, FatigueService::class.java)) }
+            waitFor("Camera-only firmware should supply monitoring frames") {
+                FatigueManager.isMonitoring.value && FatigueManager.frames.value != null
+            }
+            fixture("/test/stream?enabled=0")
+            waitFor("Lost legacy video must block alarm commands") {
+                FatigueManager.streamStatus.value == StreamStatus.LOST && EspConnection.verifiedId.value == null
+            }
+            fixture("/test/stream?enabled=1")
+            waitFor("Legacy reconnect must verify video again") {
+                FatigueManager.streamStatus.value == StreamStatus.STREAMING && EspConnection.verifiedId.value == "manual-local"
+            }
+            FatigueService.stopAndAwait(context)
+            assertFalse(FatigueManager.isMonitoring.value)
+            assertNull(FatigueManager.frames.value)
+            assertTrue(FirebaseApp.getApps(context).isEmpty())
+        }
     }
     @Test fun recoveryHotspotCanStreamWithSavedStationSettings() = runBlocking {
         fixture("/test/status", JSONObject().put("mode", "sta").put("connected", false).put("hotspot_active", true))

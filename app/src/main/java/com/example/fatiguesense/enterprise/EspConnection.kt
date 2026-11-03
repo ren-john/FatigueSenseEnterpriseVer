@@ -1,6 +1,7 @@
 package com.example.fatiguesense.enterprise.enterprise
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -9,6 +10,8 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.util.Base64
 import android.util.Log
+import android.os.SystemClock
+import com.example.fatiguesense.enterprise.ml.JpegFrameParser
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,13 +27,14 @@ object EspConnection {
     val configuredAssignment = MutableStateFlow<Assignment?>(null)
     val localReady = MutableStateFlow(false)
     private var localManual = false
+    private var cameraOnlyHost: String? = null
     private var app: Context? = null
     private var setupPasswordInMemory: String? = null
     private var manualIdentity: Pair<Assignment, String>? = null
     val network: Network? get() = app?.let { context ->
         host.value.takeIf { it.isNotBlank() }?.let { runCatching { route(context, it) }.getOrNull() }
     }
-    fun clear() { localReady.value = false; verifiedId.value = null; configuredAssignment.value = null; host.value = ""; setupPasswordInMemory = null; manualIdentity = null }
+    fun clear() { localReady.value = false; verifiedId.value = null; configuredAssignment.value = null; host.value = ""; setupPasswordInMemory = null; manualIdentity = null; cameraOnlyHost = null; localManual = false }
     fun blockCommands() { localReady.value = false; verifiedId.value = null }
     suspend fun prepare(context: Context, driver: Driver, assignment: Assignment) {
         check(configuredAssignment.value == assignment) { "Verify the assigned ESP first." }
@@ -53,22 +57,27 @@ object EspConnection {
     )
     fun savedLocalHost(context: Context): String = context.getSharedPreferences("local-esp", 0).getString("ip", "") ?: ""
     fun savedLocalId(context: Context): String? = context.getSharedPreferences("local-esp", 0).getString("device-id", null)
+    fun savedLocalLegacy(context: Context): Boolean = context.getSharedPreferences("local-esp", 0).getBoolean("legacy-confirmed", false)
+    fun savedLocalCameraOnly(context: Context): Boolean = context.getSharedPreferences("local-esp", 0).getBoolean("camera-only", false)
     fun forgetLocal(context: Context) { clear(); context.getSharedPreferences("local-esp", 0).edit().clear().apply() }
     suspend fun verifyLocal(context: Context, ip: String, password: String, confirmLegacy: Boolean): JSONObject {
         blockCommands()
         check(AppModes.policy.mode.value == AppMode.LOCAL) { "Local mode changed." }
         val address = validIp(ip)
-        val result = status(context, address, password)
+        val result = localStatus(context, address, password, confirmLegacy)
         val reported = result.optString("device_id").takeUnless { result.isNull("device_id") || it.isBlank() }
         requireLocalEspIdentity(reported, savedLocalId(context), confirmLegacy)
-        requireCamera(result)
+        if (!result.optBoolean("camera_only")) requireCamera(result)
         currentCoroutineContext().ensureActive()
         check(AppModes.policy.mode.value == AppMode.LOCAL) { "Local mode changed." }
         val prefs = context.getSharedPreferences("local-esp", 0)
         check(prefs.edit().putString("ip", address).putString("device-id", reported ?: savedLocalId(context))
-            .putString("mode", result.getString("mode")).commit()) { "Could not save local pairing." }
+            .putString("mode", result.optString("mode", "camera-only"))
+            .putBoolean("camera-only", result.optBoolean("camera_only"))
+            .putBoolean("legacy-confirmed", confirmLegacy && reported == null).commit()) { "Could not save local pairing." }
         app = context.applicationContext; host.value = address
         setupPasswordInMemory = password; localManual = confirmLegacy
+        cameraOnlyHost = address.takeIf { result.optBoolean("camera_only") }
         configuredAssignment.value = null
         verifiedId.value = reported ?: "manual-local"
         localReady.value = true
@@ -130,20 +139,78 @@ object EspConnection {
         }
     }
     suspend fun status(context: Context, ip: String, password: String) = request(context, ip, password, null)
-    suspend fun request(context: Context, ip: String, password: String, settings: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
+    /** Camera-only firmware is opt-in and cannot replace a previously identified device. */
+    suspend fun localStatus(context: Context, ip: String, password: String, confirmLegacy: Boolean): JSONObject {
         val address = validIp(ip)
-        val url = URL("http://$address/api/wifi")
+        if (cameraOnlyHost != address || !confirmLegacy) {
+            try { return status(context, address, password) }
+            catch (e: EspHttpException) { if (e.code != 404) throw e }
+        }
+        check(AppModes.policy.mode.value == AppMode.LOCAL) { "Local mode changed." }
+        require(confirmLegacy) {
+            "This camera uses camera-only firmware. Open Connection options, enable My camera uses older firmware, then tap Connect camera again."
+        }
+        requireLocalEspIdentity(null, savedLocalId(context), confirmLegacy)
+        probeCameraStream(context, address)
+        currentCoroutineContext().ensureActive()
+        check(AppModes.policy.mode.value == AppMode.LOCAL) { "Local mode changed." }
+        // These fields describe the app's stream probe, not fabricated Wi-Fi settings.
+        return JSONObject().put("camera_only", true).put("camera_ready", true)
+    }
+
+    private fun openLocalConnection(context: Context, address: String, url: URL): HttpURLConnection {
         val wifiRoute = route(context, address)
         check(address != "192.168.4.1" || wifiRoute != null) {
             "Join FatigueSense_Cam in Android Wi-Fi settings and choose Stay connected without internet, then tap Connect camera again."
         }
-        val connection = (wifiRoute?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
+        return ((wifiRoute?.openConnection(url) ?: url.openConnection()) as HttpURLConnection).apply {
+            connectTimeout = 5000; readTimeout = 5000
+            instanceFollowRedirects = false
+            setRequestProperty("Connection", "close")
+            useCaches = false
+        }
+    }
+
+    private suspend fun probeCameraStream(context: Context, address: String) = withContext(Dispatchers.IO) {
+        val connection = openLocalConnection(context, address, URL("http://$address:81/stream"))
         try {
-            connection.connectTimeout = 5000; connection.readTimeout = 5000
-            connection.instanceFollowRedirects = false
-            // ESP HTTP servers have few sockets; short requests must not retain idle sessions.
-            connection.setRequestProperty("Connection", "close")
-            connection.useCaches = false
+            val code = connection.responseCode
+            check(code == 200) { "Camera video returned HTTP $code. Check that this firmware serves video on port 81 at /stream." }
+            val deadline = SystemClock.elapsedRealtime() + 5000
+            val parser = JpegFrameParser()
+            val buffer = ByteArray(8192)
+            var received = 0
+            var decoded = false
+            connection.inputStream.use { input ->
+                while (!decoded && received < 2 * 1024 * 1024) {
+                    currentCoroutineContext().ensureActive()
+                    val remaining = deadline - SystemClock.elapsedRealtime()
+                    check(remaining > 0) { "The camera is connected, but no valid video frame arrived. Restart the camera and try again." }
+                    connection.readTimeout = remaining.toInt()
+                    val count = input.read(buffer)
+                    check(count > 0) { "The camera closed its video before sending a frame. Restart the camera and try again." }
+                    received += count
+                    parser.consume(buffer, count) { jpeg, size ->
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(jpeg, 0, size, bounds)
+                        if (bounds.outWidth in 1..4096 && bounds.outHeight in 1..4096) {
+                            BitmapFactory.decodeByteArray(jpeg, 0, size, BitmapFactory.Options().apply { inSampleSize = 8 })?.let {
+                                decoded = true
+                                it.recycle()
+                            }
+                        }
+                    }
+                }
+            }
+            check(decoded) { "The camera did not send a valid video frame. Restart the camera and try again." }
+        } finally { connection.disconnect() }
+    }
+
+    suspend fun request(context: Context, ip: String, password: String, settings: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
+        val address = validIp(ip)
+        val url = URL("http://$address/api/wifi")
+        val connection = openLocalConnection(context, address, url)
+        try {
             connection.setRequestProperty("Authorization", "Basic " + Base64.encodeToString("admin:$password".toByteArray(), Base64.NO_WRAP))
             if (settings != null) {
                 connection.requestMethod = "POST"; connection.doOutput = true
@@ -151,7 +218,8 @@ object EspConnection {
                 connection.setRequestProperty("X-Requested-With", "FatigueSense")
                 connection.outputStream.use { it.write(settings.toString().toByteArray()) }
             }
-            check(connection.responseCode == 200) { "ESP returned HTTP ${connection.responseCode}. Check setup password and connectivity." }
+            val code = connection.responseCode
+            if (code != 200) throw EspHttpException(code)
             val bytes = connection.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(1024)
@@ -163,7 +231,7 @@ object EspConnection {
                 }
                 output.toByteArray()
             }
-            JSONObject(String(bytes, Charsets.UTF_8))
+            JSONObject(String(bytes, Charsets.UTF_8)).apply { remove("camera_only") }
         } finally { connection.disconnect() }
     }
     suspend fun verify(context: Context, assignment: Assignment, driver: Driver, ip: String, password: String,
@@ -255,3 +323,8 @@ object EspConnection {
         error("Could not find the assigned ESP. Enter its IP manually or reconnect to the recovery hotspot.")
     }
 }
+
+internal class EspHttpException(val code: Int) : IllegalStateException(
+    if (code == 404) "ESP returned HTTP 404: this firmware does not support camera Wi-Fi setup/status. In Local mode, enable My camera uses older firmware under Connection options to connect using video."
+    else "ESP returned HTTP $code. Check setup password and connectivity."
+)

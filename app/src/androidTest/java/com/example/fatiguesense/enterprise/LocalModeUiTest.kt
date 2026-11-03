@@ -85,4 +85,20 @@ class LocalModeUiTest {
         ui.onNodeWithText("Reconnect saved camera").assertDoesNotExist()
         assertEquals(AppMode.LOCAL, AppModes.policy.mode.value)
     }
+
+    @Test fun cameraOnlyPairingRestoresLegacyChoiceAndDisablesWifiChanges() {
+        ui.activity.getSharedPreferences("local-esp", 0).edit()
+            .putString("ip", "192.168.4.1").putBoolean("legacy-confirmed", true)
+            .putBoolean("camera-only", true).commit()
+        ui.onNodeWithText("CONNECT ESP").performScrollTo().performClick()
+        ui.onNodeWithText("Connection options").performScrollTo().performClick()
+        ui.onNode(isToggleable()).assertIsOn()
+        ui.onNodeWithText("Use your phone’s hotspot").performScrollTo().performClick()
+        ui.onNodeWithText("Save and restart camera").performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("Use hotspot saved on camera").performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("Troubleshooting & device settings").performScrollTo().performClick()
+        ui.onNodeWithText("Switch camera to direct Wi-Fi").performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("Remove saved hotspot from camera").performScrollTo().assertIsNotEnabled()
+        ui.onNodeWithText("Pair a different camera").performScrollTo().assertIsEnabled()
+    }
 }

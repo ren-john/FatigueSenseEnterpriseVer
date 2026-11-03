@@ -11,7 +11,10 @@ import android.os.Looper
 import android.util.Log
 import com.example.fatiguesense.enterprise.R
 
-/** One looping phone alarm per monitoring session, serialized on the main thread. */
+internal fun shouldPlayPhoneAlert(result: AnalysisResult, status: StreamStatus): Boolean =
+    status == StreamStatus.STREAMING && (result.isFatigueAlert || result.isYawnAlert)
+
+/** One looping phone alarm for EAR and yawn alerts, serialized on the main thread. */
 internal class PhoneEarAlarm(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val handler = Handler(Looper.getMainLooper())
@@ -68,17 +71,17 @@ internal class PhoneEarAlarm(context: Context) : AutoCloseable {
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             }
             if (focus != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.w(TAG, "Phone EAR alarm could not obtain audio focus")
+                Log.w(TAG, "Phone alert could not obtain audio focus")
                 return@onMain
             }
             focusRequested = true
             // create() prepares the small bundled clip and returns a ready player.
             val candidate = checkNotNull(MediaPlayer.create(appContext, R.raw.ndrrmc_alert_1,
-                attributes, 0)) { "Unable to prepare phone EAR alarm" }
+                attributes, 0)) { "Unable to prepare phone alert" }
             player = candidate
             candidate.isLooping = true
             candidate.setOnErrorListener { _, what, extra ->
-                Log.e(TAG, "Phone EAR alarm playback failed: $what/$extra")
+                Log.e(TAG, "Phone alert playback failed: $what/$extra")
                 releasePlayer()
                 true
             }
@@ -89,7 +92,7 @@ internal class PhoneEarAlarm(context: Context) : AutoCloseable {
     }
 
     private fun playbackFailed(error: Exception) {
-        Log.e(TAG, "Phone EAR alarm unavailable", error)
+        Log.e(TAG, "Phone alert unavailable", error)
         releasePlayer()
     }
 
