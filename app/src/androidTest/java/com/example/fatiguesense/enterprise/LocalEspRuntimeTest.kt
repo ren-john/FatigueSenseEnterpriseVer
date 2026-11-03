@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.fatiguesense.enterprise.MainActivity
 import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.ml.Esp32AlertSender
+import com.example.fatiguesense.enterprise.ml.EyeClosureAlertSettings
 import com.example.fatiguesense.enterprise.ml.StreamStatus
 import com.example.fatiguesense.enterprise.db.FatigueDatabase
 import com.example.fatiguesense.enterprise.services.FatigueService
@@ -245,6 +246,56 @@ class LocalEspRuntimeTest {
             AppModes.toLocal()
             assertTrue(FirebaseApp.getApps(context).isEmpty())
             assertTrue("Unexpected HTTP destination: $destinations", destinations.all { it.host == "127.0.0.1" && it.port in listOf(-1, 80, 81) })
+        }
+    }
+
+    @Test fun repeatedDetectorClosuresReachPopupAndAcknowledgementKeepsMonitoring() = runBlocking {
+        FatigueManager.init(context)
+        val adaptive = FatigueManager.isAdaptiveModeEnabled.value
+        val ear = FatigueManager.earThreshold
+        val mar = FatigueManager.marThreshold
+        val frames = FatigueManager.alertFrameCount
+        val popupSettings = FatigueManager.eyeClosureAlertSettings.value
+        try {
+            FatigueManager.setAdaptiveMode(false)
+            FatigueManager.earThreshold = .9f
+            FatigueManager.marThreshold = 2f
+            FatigueManager.alertFrameCount = 1
+            FatigueManager.updateEyeClosureAlertSettings(EyeClosureAlertSettings(2, 60))
+            fixture("/test/frame?kind=face")
+            EspConnection.verifyLocal(context, "127.0.0.1", "safedriving", false)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { it.startForegroundService(Intent(it, FatigueService::class.java)) }
+                waitFor("A qualifying closure must enter the popup window") { FatigueManager.eyeClosuresInWindow.value == 1 }
+                assertNull(FatigueManager.eyeClosurePopup.value)
+                // The retained real-face fixture stays fixed; moving the EAR cutoff
+                // produces observed open/closed transitions through native inference.
+                FatigueManager.earThreshold = .01f
+                waitFor("The detector must observe reopened eyes") {
+                    FatigueManager.analysisResult.value.earValid && !FatigueManager.analysisResult.value.isFatigueAlert
+                }
+                FatigueManager.earThreshold = .9f
+                waitFor("The second separate closure must produce a popup") { FatigueManager.eyeClosurePopup.value != null }
+                val alert = checkNotNull(FatigueManager.eyeClosurePopup.value)
+                assertEquals(2, alert.closureCount)
+                assertEquals(60, alert.windowSeconds)
+                FatigueManager.dismissEyeClosurePopup(alert.id)
+                assertNull(FatigueManager.eyeClosurePopup.value)
+                assertTrue(FatigueManager.isMonitoring.value)
+                FatigueManager.earThreshold = .01f
+                waitFor("Eyes reopen after acknowledgement") { !FatigueManager.analysisResult.value.isFatigueAlert }
+                FatigueManager.earThreshold = .9f
+                waitFor("Monitoring continues counting without a duplicate popup") { FatigueManager.eyeClosuresInWindow.value == 3 }
+                assertNull(FatigueManager.eyeClosurePopup.value)
+                FatigueService.stopAndAwait(context)
+                assertEquals(0, FatigueManager.eyeClosuresInWindow.value)
+                assertNull(FatigueManager.eyeClosurePopup.value)
+            }
+        } finally {
+            FatigueService.stopAndAwait(context)
+            FatigueManager.earThreshold = ear; FatigueManager.marThreshold = mar
+            FatigueManager.alertFrameCount = frames; FatigueManager.setAdaptiveMode(adaptive)
+            FatigueManager.updateEyeClosureAlertSettings(popupSettings)
         }
     }
 

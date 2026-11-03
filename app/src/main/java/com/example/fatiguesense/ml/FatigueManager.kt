@@ -86,6 +86,8 @@ object FatigueManager {
     private val PREF_EAR_THRESHOLD = ModelProfile.preferenceKey("manual_ear_threshold")
     private val PREF_MAR_THRESHOLD = ModelProfile.preferenceKey("manual_mar_threshold")
     private const val PREF_ALERT_FRAMES   = "alert_frame_count"
+    private const val PREF_CLOSURE_COUNT = "eye_closure_popup_count"
+    private const val PREF_CLOSURE_SECONDS = "eye_closure_popup_seconds"
 
     // ── Internal coroutine scope ───────────────────────────────────────────────
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -155,6 +157,49 @@ object FatigueManager {
     private val _activeAlertState = MutableStateFlow(ActiveAlertState.NONE)
     val activeAlertState: StateFlow<ActiveAlertState> = _activeAlertState
 
+    private val eyeClosureLock = Any()
+    private val _eyeClosureAlertSettings = MutableStateFlow(EyeClosureAlertSettings())
+    val eyeClosureAlertSettings: StateFlow<EyeClosureAlertSettings> = _eyeClosureAlertSettings
+    private var eyeClosureWindow = EyeClosureWindow(_eyeClosureAlertSettings.value)
+    private val _eyeClosuresInWindow = MutableStateFlow(0)
+    val eyeClosuresInWindow: StateFlow<Int> = _eyeClosuresInWindow
+    private val _eyeClosurePopup = MutableStateFlow<EyeClosurePopup?>(null)
+    val eyeClosurePopup: StateFlow<EyeClosurePopup?> = _eyeClosurePopup
+    private var eyeClosurePopupId = 0L
+
+    fun updateEyeClosureAlertSettings(settings: EyeClosureAlertSettings) = synchronized(eyeClosureLock) {
+        prefs?.edit()?.putInt(PREF_CLOSURE_COUNT, settings.closureCount)
+            ?.putInt(PREF_CLOSURE_SECONDS, settings.windowSeconds)?.apply()
+        _eyeClosureAlertSettings.value = settings
+        resetEyeClosureWindow()
+    }
+
+    fun dismissEyeClosurePopup(id: Long) = synchronized(eyeClosureLock) {
+        if (_eyeClosurePopup.value?.id == id) _eyeClosurePopup.value = null
+    }
+
+    private fun resetEyeClosureWindow(clearPopup: Boolean = true) = synchronized(eyeClosureLock) {
+        eyeClosureWindow = EyeClosureWindow(_eyeClosureAlertSettings.value)
+        _eyeClosuresInWindow.value = 0
+        if (clearPopup) _eyeClosurePopup.value = null
+    }
+
+    private fun recordEyeClosureObservation(result: AnalysisResult) = synchronized(eyeClosureLock) {
+        if (!_isMonitoring.value || _streamStatus.value != StreamStatus.STREAMING) return@synchronized
+        if (result.calibrationState == CalibrationState.WARMING_UP || result.qualityStatus == FrameQuality.WARMING_UP_ACCEPTED) {
+            resetEyeClosureWindow()
+            return@synchronized
+        }
+        val eyesClosed = if (result.earValid && result.ear.isFinite() && result.computedEarThreshold > 0f)
+            result.ear < result.computedEarThreshold else null
+        val window = eyeClosureWindow.observe(SystemClock.elapsedRealtime(), eyesClosed, result.isFatigueAlert)
+        _eyeClosuresInWindow.value = window.count
+        if (window.triggered && _eyeClosurePopup.value == null) {
+            val settings = _eyeClosureAlertSettings.value
+            _eyeClosurePopup.value = EyeClosurePopup(++eyeClosurePopupId, window.count, settings.windowSeconds)
+        }
+    }
+
     /** Rising-edge tracking: when the alert started and what the EAR was. */
     private var alertStartMs: Long = 0L
     private var alertStartEar: Float = 0f
@@ -182,6 +227,9 @@ object FatigueManager {
             earThreshold   = prefs!!.getFloat(PREF_EAR_THRESHOLD, 0.22f)
             marThreshold   = prefs!!.getFloat(PREF_MAR_THRESHOLD, 0.60f)
             alertFrameCount = prefs!!.getInt(PREF_ALERT_FRAMES, 8)
+            updateEyeClosureAlertSettings(runCatching {
+                EyeClosureAlertSettings(prefs!!.getInt(PREF_CLOSURE_COUNT, 3), prefs!!.getInt(PREF_CLOSURE_SECONDS, 60))
+            }.getOrDefault(EyeClosureAlertSettings()))
 
             _isAdaptiveModeEnabled.value = savedAdaptiveMode
             if (savedBaseline > 0f) {
@@ -214,6 +262,7 @@ object FatigueManager {
         earThreshold = 0.22f
         marThreshold = 0.60f
         alertFrameCount = 8
+        updateEyeClosureAlertSettings(EyeClosureAlertSettings())
         setAdaptiveMode(true)
         resetCalibration()
         Log.i(TAG, "All calibration settings reset to default values")
@@ -259,6 +308,7 @@ object FatigueManager {
     // ── Adaptive mode toggle ──────────────────────────────────────────────────
 
     fun setAdaptiveMode(enabled: Boolean) {
+        resetEyeClosureWindow()
         _isAdaptiveModeEnabled.value = enabled
         prefs?.edit()?.putBoolean(PREF_ADAPTIVE_MODE, enabled)?.apply()
         if (enabled) {
@@ -271,6 +321,7 @@ object FatigueManager {
 
     /** Clears the saved baseline and re-starts the warmup window. */
     fun resetCalibration() {
+        resetEyeClosureWindow()
         prefs?.edit()?.remove(PREF_BASELINE_EAR)?.apply()
         _baselineEar.value    = 0f
         _warmupProgress.value = 0f
@@ -299,6 +350,7 @@ object FatigueManager {
         Log.i(TAG, "Starting monitoring pipeline")
 
         init(context)
+        resetEyeClosureWindow()
         if (enterpriseSession != null) DetectionJournal.start(enterpriseSession)
         Esp32AlertSender.startSession(context)
         val appCtx = context.applicationContext
@@ -348,6 +400,7 @@ object FatigueManager {
                         launch(Dispatchers.Default) {
                             try {
                                 a.processFrame(bmp)
+                                recordEyeClosureObservation(a.result.value)
                                 if (enterpriseSession != null) {
                                     a.lastObservation?.let { DetectionJournal.frame(enterpriseSession.sessionId, it) }
                                         ?: DetectionJournal.gap(enterpriseSession.sessionId)
@@ -365,6 +418,7 @@ object FatigueManager {
                 if (!_isMonitoring.value) return@collect
                 _streamStatus.value = it
                 if (it == StreamStatus.LOST) {
+                    resetEyeClosureWindow(clearPopup = false)
                     EspConnection.blockCommands()
                     if (enterpriseSession != null) DetectionJournal.gap(enterpriseSession.sessionId)
                 } else if (it == StreamStatus.STREAMING) Esp32AlertSender.onNetworkAvailable()
@@ -542,6 +596,7 @@ object FatigueManager {
                 ) {
                     Log.w(TAG, "Watchdog: no frame for ${WATCHDOG_GAP_MS}ms — marking LOST")
                     _streamStatus.value = StreamStatus.LOST
+                    resetEyeClosureWindow(clearPopup = false)
                     EspConnection.blockCommands()
                     s.reconnect()
                     if (enterpriseSession != null) DetectionJournal.gap(enterpriseSession.sessionId)
@@ -558,11 +613,13 @@ object FatigueManager {
         phoneEarAlarm?.close()
         phoneEarAlarm = null
         if (!_isMonitoring.value) {
+            resetEyeClosureWindow()
             Log.w(TAG, "stop() called while not monitoring — ignored")
             return
         }
         Log.i(TAG, "Stopping monitoring pipeline")
         _isMonitoring.value = false
+        resetEyeClosureWindow()
 
         val stoppingJob = streamJob
         val stoppingWatchdog = watchdogJob

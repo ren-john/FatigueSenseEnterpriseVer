@@ -102,6 +102,22 @@ the phone's alarm audio settings and requests temporary audio focus; it pauses
 when another audio source temporarily takes focus. Audio errors do not block
 ESP32 clear commands or event logging.
 
+## Repeated eye-closure popup
+
+During monitoring, a popup appears after **3 qualified eye closures within 60
+seconds** by default. In **Calibration → Eye-closure popup**, edit the closure
+count and time window, then tap **Save eye-closure alert**. Settings persist across
+app restarts and work in Adaptive and Manual mode. Resetting calibration defaults
+also restores these limits.
+
+A closure counts once after meeting the existing EAR threshold and consecutive-frame
+sensitivity; eyes must visibly reopen before another closure counts. The window
+uses elapsed time rather than frame rate. The popup works across app screens and
+stays until acknowledged. Acknowledgement leaves detection and audio running;
+another popup can fire after the count falls below the limit and reaches it again.
+Saving popup limits, recalibration, stream loss, and a new/stopped monitoring session
+start a fresh counting window. This does not enable ESP buzzer activation.
+
 ## Driver and web integration
 
 The 2026-10-29 update connects this driver-only client to the sibling

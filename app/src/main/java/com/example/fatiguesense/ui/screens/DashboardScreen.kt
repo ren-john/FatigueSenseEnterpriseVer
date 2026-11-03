@@ -67,6 +67,8 @@ fun DashboardScreen(onConnectEsp: () -> Unit = {}) {
     // resets only when STOP MONITORING is pressed (via FatigueManager.stop()).
     val alertCount by FatigueManager.sessionAlertCount.collectAsState()
     val yawnCount by FatigueManager.sessionYawnCount.collectAsState()
+    val closureSettings by FatigueManager.eyeClosureAlertSettings.collectAsState()
+    val closuresInWindow by FatigueManager.eyeClosuresInWindow.collectAsState()
 
     val grayscaleMatrix = remember { ColorMatrix().apply { setToSaturation(0f) } }
 
@@ -367,6 +369,7 @@ fun DashboardScreen(onConnectEsp: () -> Unit = {}) {
             })
             InfoRow(label = "MAR (MOUTH OPEN RATIO)", value = if (analysis.marValid) "%.2f".format(analysis.mar) else "--")
             InfoRow(label = "YAWNS (60 S WINDOW)", value = analysis.yawnsInWindow.toString())
+            InfoRow(label = "EYE CLOSURES (${closureSettings.windowSeconds} S)", value = "$closuresInWindow / ${closureSettings.closureCount}")
             InfoRow(
                 label = "YAWN FATIGUE",
                 value = if (analysis.isYawnFatigueTriggered) "TRIGGERED" else "TIER 1",

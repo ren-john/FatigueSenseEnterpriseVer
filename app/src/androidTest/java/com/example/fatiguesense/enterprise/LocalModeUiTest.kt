@@ -56,6 +56,30 @@ class LocalModeUiTest {
         assertTrue(FirebaseApp.getApps(ui.activity).isEmpty())
     }
 
+    @Test fun eyeClosurePopupLimitsAreEditableValidatedAndSavedInCalibration() {
+        val manager = com.example.fatiguesense.enterprise.ml.FatigueManager
+        val original = manager.eyeClosureAlertSettings.value
+        try {
+            ui.onNodeWithText("CALIBRATION").performClick()
+            ui.onNodeWithText("Eye closures to trigger popup").performScrollTo().performTextReplacement("0")
+            ui.onNodeWithText("Save eye-closure alert").performScrollTo().assertIsNotEnabled()
+            ui.onNodeWithText("Eye closures to trigger popup").performScrollTo().performTextReplacement("5")
+            ui.onNodeWithText("Time window (seconds)").performScrollTo().performTextReplacement("30")
+            ui.onNodeWithText("Save eye-closure alert").performScrollTo().performClick()
+            ui.runOnIdle {
+                assertEquals(5, manager.eyeClosureAlertSettings.value.closureCount)
+                assertEquals(30, manager.eyeClosureAlertSettings.value.windowSeconds)
+                val prefs = ui.activity.getSharedPreferences("fatiguesense_prefs", 0)
+                assertEquals(5, prefs.getInt("eye_closure_popup_count", -1))
+                assertEquals(30, prefs.getInt("eye_closure_popup_seconds", -1))
+            }
+            ui.activityRule.scenario.recreate()
+            ui.onNodeWithText("Current: 5 closures in 30 seconds. Saving starts a new counting window.").performScrollTo().assertIsDisplayed()
+        } finally {
+            ui.runOnIdle { manager.updateEyeClosureAlertSettings(original) }
+        }
+    }
+
     @Test fun firstConnectionUsesEnteredIpAndKeepsErrorsVisible() {
         EspConnection.forgetLocal(ui.activity)
         ui.onNodeWithText("CONNECT ESP").performScrollTo().performClick()

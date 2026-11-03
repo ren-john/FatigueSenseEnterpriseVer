@@ -16,6 +16,7 @@ import com.example.fatiguesense.enterprise.ml.FatigueManager
 import com.example.fatiguesense.enterprise.ml.StreamStatus
 import com.example.fatiguesense.enterprise.ui.components.AppBottomBar
 import com.example.fatiguesense.enterprise.ui.components.AppTopBar
+import com.example.fatiguesense.enterprise.ui.components.EyeClosureAlertDialog
 import com.example.fatiguesense.enterprise.ui.components.BottomBarItem
 import com.example.fatiguesense.enterprise.ui.navigation.AppNavHost
 import com.example.fatiguesense.enterprise.ui.navigation.Routes
@@ -93,6 +94,10 @@ fun FatigueSenseApp() {
                     AppNavHost(navController = navController)
                 }
             }
+        }
+        val eyeClosurePopup by FatigueManager.eyeClosurePopup.collectAsState()
+        eyeClosurePopup?.let { alert ->
+            EyeClosureAlertDialog(alert, onDismiss = { FatigueManager.dismissEyeClosurePopup(alert.id) })
         }
     }
 }

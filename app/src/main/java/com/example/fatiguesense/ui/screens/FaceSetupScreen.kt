@@ -49,6 +49,7 @@ fun FaceSetupScreen() {
     val earThreshold    by FatigueManager.earThresholdFlow.collectAsState()
     val marThreshold    by FatigueManager.marThresholdFlow.collectAsState()
     val alertFrameCount by FatigueManager.alertFrameCountFlow.collectAsState()
+    val eyeClosureAlertSettings by FatigueManager.eyeClosureAlertSettings.collectAsState()
 
     val analysis          by FatigueManager.analysisResult.collectAsState()
     val isMonitoring      by FatigueManager.isMonitoring.collectAsState()
@@ -496,8 +497,15 @@ fun FaceSetupScreen() {
 
             Spacer(Modifier.height(20.dp))
 
+            SectionHeader(title = "0${sectionOffset + 3}. EYE-CLOSURE POPUP")
+            Spacer(Modifier.height(10.dp))
+            Column(Modifier.fillMaxWidth().background(FatigueSurfaceAlt, RoundedCornerShape(6.dp)).padding(14.dp)) {
+                EyeClosureAlertSettingsEditor(eyeClosureAlertSettings, FatigueManager::updateEyeClosureAlertSettings)
+            }
+            Spacer(Modifier.height(20.dp))
+
             // ── Landmark map reference ────────────────────────────────────────
-            SectionHeader(title = "0${sectionOffset + 3}. LANDMARK MAP (CONFIRMED)")
+            SectionHeader(title = "0${sectionOffset + 4}. LANDMARK MAP (CONFIRMED)")
             Spacer(Modifier.height(6.dp))
             InfoRow(label = "ACTIVE MODEL", value = ModelProfile.label)
             InfoRow(label = "POINTS 0–5", value = "RIGHT EYE (6 points)")
@@ -509,7 +517,7 @@ fun FaceSetupScreen() {
             Spacer(Modifier.height(16.dp))
 
             // ── Reset to Defaults ─────────────────────────────────────────────
-            SectionHeader(title = "0${sectionOffset + 4}. RESET TO DEFAULTS")
+            SectionHeader(title = "0${sectionOffset + 5}. RESET TO DEFAULTS")
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick  = { showResetDialog = true },
